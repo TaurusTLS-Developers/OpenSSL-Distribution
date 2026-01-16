@@ -7,12 +7,15 @@ This folder contains various scripts to build OpenSSL binaries for various platf
   Builds various 3.0 version of OpenSSL DLLs for Windows 32-bit and 64-bit using MSYS2/MINGW toolchain.  Use either MSYS2 MINGW64, or MSYS2 MINGW32 shortcuts.
 
   Can be modified to build older/newer 3.x versions of OpenSSL
-* `build-win32.cmd`
+* `build-win32-i386.cmd`
 
-  Builds various Win32 OpenSSL 3.x versions using Visual Studio Community Edition 2022, nasm, Strawberry Perl, and 7-Zip.
-* `build-win64.cmd`
+  Builds various Win32-i386 OpenSSL 3.x versions using Visual Studio Community Edition 2022, nasm, Strawberry Perl, and 7-Zip.
+* `build-win64-arm64.cmd`
 
-  Builds various Win64 OpenSSL 3.x versions using Visual Studio Community Edition 2022, nasm, Strawberry Perl, and 7-Zip.
+  Builds various Win64-arm64 OpenSSL 3.x versions using Visual Studio Community Edition 2022, nasm, Strawberry Perl, and 7-Zip.  
+* `build-win64-x86_64.cmd`
+
+  Builds various Win64-x86_64 OpenSSL 3.x versions using Visual Studio Community Edition 2022, nasm, Strawberry Perl, and 7-Zip.
 * `build_old_1x_dist.sh` 
   
   Builds version 1.1.1w of OpenSSL DLLs for Windows 32-bit and 64-bit
