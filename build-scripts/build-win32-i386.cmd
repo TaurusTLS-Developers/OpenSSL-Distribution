@@ -1,7 +1,7 @@
 call "%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
 mkdir win32-i386-hybridcrt
 cd win32-i386-hybridcrt
-set list=3.6.0 3.5.4 3.4.3 3.3.5 3.2.6
+set list=3.6.1 3.5.5 3.4.4 3.3.6
 SET CL=/D_WIN32_WINNT=0x0601 /D_WIN32_IE=0x0900 %CL%
 SET LINK=/SUBSYSTEM:CONSOLE,6.01 %LINK%
 for %%a in (%list%) do (
@@ -11,7 +11,7 @@ for %%a in (%list%) do (
   perl Configure VC-WIN32-HYBRIDCRT
   nmake
   "%ProgramFiles%\7-Zip\7z" a openssl-%%a-win32-i386.zip *.dll
-  "%ProgramFiles%\7-Zip\7z" a openssl-%%a-win32-i366.zip LICENSE.txt
+  "%ProgramFiles%\7-Zip\7z" a openssl-%%a-win32-i386.zip LICENSE.txt
   cd apps
   "%ProgramFiles%\7-Zip\7z" a ../openssl-%%a-win32-i386.zip openssl.exe
   cd ..
