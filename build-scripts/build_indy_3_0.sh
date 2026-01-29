@@ -4,34 +4,38 @@
 #
   case "${MSYSTEM}" in
     MINGW32)
-      _mingw=mingw
-	  _win=win32
-	  _subdir=mingw32
-	  _subdir=mingw32
+    _mingw=mingw
+    _win=win32
+    _subdir=mingw32
+    _arch=i386
       ;;
     CLANG32)
-      _mingw=mingw
-	  _win=win32
-     _subdir=mingw32 
+    _mingw=mingw
+    _win=win32
+    _subdir=mingw32 
+    _arch=i386
       ;;
     MINGW64)
-      _mingw=mingw64
-	  _win=win64
-	  _subdir=mingw64
+    _mingw=mingw64
+    _win=win64
+    _subdir=mingw64
+    _arch=x86_64
       ;;
-	CLANG64)
-      _mingw=mingw64
-	  _win=win64
-	    _subdir=mingw64
+   CLANG64)
+   _mingw=mingw64
+   _win=win64
+   _subdir=mingw64
+   _arch=x86_64
       ;;	
-    CLANGARM64)
-      _mingw=mingwarm64
-	  _win=winarm64
-	  _subdir=mingw64
-      ;;
+   CLANGARM64)
+   _mingw=mingwarm64
+   _win=win64
+   _subdir=mingw64-arm
+   _arch=arm64
+    ;;
   esac
 
-versions=("3.0.18")
+versions=("3.0.19")
 mkdir ${_subdir}
 cd ${_subdir}
 for ver in "${versions[@]}"; do
@@ -51,17 +55,13 @@ for ver in "${versions[@]}"; do
   fi
   /usr/bin/perl Configure ${_mingw} shared
   make
-  zip "openssl-${ver}-${_win}.zip" *.dll
-  zip "openssl-${ver}-${_win}.zip" LICENSE.txt
+  zip "openssl-${ver}-${_win}-${_arch}.zip" *.dll
+  zip "openssl-${ver}-${_win}-${_arch}.zip" LICENSE.txt
   cd apps
-  zip ../"openssl-${ver}-${_win}.zip" openssl.exe
+  zip ../"openssl-${ver}-${_win}-${_arch}.zip" openssl.exe
   cd ..
-  zip "openssl-${ver}-${_win}.zip" providers/*.dll
-  zip "openssl-${ver}-${_win}.zip" engines/*.dll
-  mv "openssl-${ver}-${_win}.zip" ..
+  zip "openssl-${ver}-${_win}-${_arch}.zip" providers/*.dll
+  zip "openssl-${ver}-${_win}-${_arch}.zip" engines/*.dll
+  mv "openssl-${ver}-${_win}-${_arch}.zip" ..
   cd ..
 done
-
-
-
-
