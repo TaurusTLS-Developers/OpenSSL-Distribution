@@ -21,56 +21,58 @@ jobs:
             os-runner: windows-latest
             arch: x64
             target: VC-WIN64A
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          
+
           # Windows 32-bit
           - os-label: Windows
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
 
           # Linux x64
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: x64
             target: linux-x86_64
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
 
           # macOS x64 (Intel) - Cross-compile on ARM runner
           - os-label: macOS
             os-runner: macos-14
             arch: x64
             target: darwin64-x86_64-cc
-            setup_cmd: echo "Setup Mac Intel"
 
           # macOS ARM64 (Apple Silicon)
           - os-label: macOS
             os-runner: macos-14
             arch: arm64
             target: darwin64-arm64-cc
-            setup_cmd: echo "Setup Mac ARM"
 
     steps:
       - name: Checkout Builder Repo
         uses: actions/checkout@v4
 
-      - name: Install Perl/NASM (Windows Only)
+      # ------------------------------------------------------------------------
+      # ENVIRONMENT SETUP
+      # ------------------------------------------------------------------------
+      
+      - name: Setup MSVC (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }} # Fix for LNK1112 (x86 vs x64)
 
       - name: Install NASM (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
-        with:
-          # This tells VS to setup x64 or x86 based on your matrix value
-          arch: ${{ matrix.arch }}
 
       - name: Remove GNU Link (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
-                if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"        
+          if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"
+
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: Download OpenSSL Source
         run: |
@@ -79,37 +81,38 @@ jobs:
           mv openssl-${{ github.event.inputs.version }} src
 
       # ------------------------------------------------------------------------
-      # CONFIGURE & BUILD SHARED
+      # BUILD SHARED
       # ------------------------------------------------------------------------
       
-      # WINDOWS: Use /MT for static CRT linking
       - name: Configure Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
 
-      # UNIX: Standard build (NO /MT flag)
       - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
 
-      - name: Build Shared
+      - name: Build Shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          nmake
+          nmake install
+
+      - name: Build Shared (Unix)
+        if: runner.os != 'Windows'
         working-directory: src
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            nmake
-            nmake install
-          else
-            make -j4
-            make install_sw
-          fi
-        shell: bash
+          make -j4
+          make install_sw
 
       # ------------------------------------------------------------------------
-      # CLEAN
+      # BUILD STATIC (Clean First)
       # ------------------------------------------------------------------------
 
       - name: Clean Source (Windows)
@@ -121,50 +124,129 @@ jobs:
       - name: Clean Source (Unix)
         if: runner.os != 'Windows'
         working-directory: src
-        shell: bash
         run: make clean
 
-      # ------------------------------------------------------------------------
-      # CONFIGURE & BUILD STATIC
-      # ------------------------------------------------------------------------
-
-      # WINDOWS: Use /MT
       - name: Configure Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
 
-      # UNIX: Standard build (NO /MT flag)
       - name: Configure Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
 
-      - name: Build Static
+      - name: Build Static (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          nmake
+          nmake install
+
+      - name: Build Static (Unix)
+        if: runner.os != 'Windows'
         working-directory: src
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            nmake
-            nmake install
-          else
-            make -j4
-            make install_sw
-          fi
+          make -j4
+          make install_sw
+
+# ------------------------------------------------------------------------
+      # REARRANGE ARTIFACTS (Create Unified Structure)
+      # ------------------------------------------------------------------------
+      - name: Rearrange Output
         shell: bash
-        
+        run: |
+          mkdir -p dist/final/bin
+          mkdir -p dist/final/lib
+          mkdir -p dist/final/include
+          mkdir -p dist/final/doc
+          mkdir -p dist/final/debug  # <--- New directory
+          
+          # 1. Headers (From shared build)
+          cp -r dist/shared/include/* dist/final/include/
+          
+          # 2. Static Libraries -> lib/
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             cp dist/static/lib/*.lib dist/final/lib/
+          else
+             # Linux/Mac: .a
+             cp dist/static/lib/*.a dist/final/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/final/lib/
+          fi
+
+          # 3. Dynamic Libraries & Exe -> bin/
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             # Binaries
+             cp dist/shared/bin/*.dll dist/final/bin/
+             cp dist/shared/bin/*.exe dist/final/bin/
+             
+             # Debug Symbols (PDB) -> debug/
+             cp dist/shared/bin/*.pdb dist/final/debug/ 2>/dev/null || true
+             
+             # Providers (legacy.dll etc)
+             mkdir -p dist/final/bin/providers
+             cp dist/shared/lib/ossl-modules/*.dll dist/final/bin/providers/
+             
+             # Debug Symbols for Providers (Optional, but good to have)
+             cp dist/shared/lib/ossl-modules/*.pdb dist/final/debug/ 2>/dev/null || true
+
+             # Engines
+             if [ -d "dist/shared/lib/engines-3" ]; then
+               mkdir -p dist/final/bin/engines
+               cp dist/shared/lib/engines-3/*.dll dist/final/bin/engines/
+               cp dist/shared/lib/engines-3/*.pdb dist/final/debug/ 2>/dev/null || true
+             fi
+          else
+             # Unix: .so / .dylib (Symbols are usually embedded unless stripped)
+             cp -P dist/shared/lib/lib*.so* dist/final/bin/ 2>/dev/null || true
+             cp -P dist/shared/lib64/lib*.so* dist/final/bin/ 2>/dev/null || true
+             cp -P dist/shared/lib/lib*.dylib dist/final/bin/ 2>/dev/null || true
+             
+             cp dist/shared/bin/openssl dist/final/bin/
+
+             # Providers
+             mkdir -p dist/final/bin/providers
+             cp dist/shared/lib*/ossl-modules/*.so dist/final/bin/providers/ 2>/dev/null || true
+             
+             # Engines
+             if ls dist/shared/lib*/engines-3/*.so 1> /dev/null 2>&1; then
+               mkdir -p dist/final/bin/engines
+               cp dist/shared/lib*/engines-3/*.so dist/final/bin/engines/
+             fi
+          fi
+          
       # ------------------------------------------------------------------------
       # PACKAGING
       # ------------------------------------------------------------------------
-      - name: Zip Artifacts
-        working-directory: dist
+      
+      # Windows: ZIP
+      - name: Pack Windows
+        if: runner.os == 'Windows'
+        working-directory: dist/final
         run: |
-          7z a ../openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip .
+          7z a ../../openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip .
+        shell: bash
+
+      # macOS: ZIP (Preserve Symlinks)
+      - name: Pack macOS
+        if: runner.os == 'macOS'
+        working-directory: dist/final
+        run: |
+          zip --symlinks -r ../../openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip .
+        shell: bash
+
+      # Linux: TAR.GZ (Native Symlinks)
+      - name: Pack Linux
+        if: runner.os == 'Linux'
+        working-directory: dist/final
+        run: |
+          tar -czvf ../../openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.tar.gz .
         shell: bash
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
-          path: openssl-*.zip
+          path: openssl-*.{zip,tar.gz}
