@@ -10,38 +10,43 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.os }} - ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os-label }} - ${{ matrix.arch }}
+    runs-on: ${{ matrix.os-runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # Windows 64-bit
-          - os: windows-latest
+          - os-label: Windows
+            os-runner: windows-latest
             arch: x64
             target: VC-WIN64A
             setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
           # Windows 32-bit
-          - os: windows-latest
+          - os-label: Windows
+            os-runner: windows-latest
             arch: x86
             target: VC-WIN32
             setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
 
           # Linux x64
-          - os: ubuntu-latest
+          - os-label: Linux
+            os-runner: ubuntu-latest
             arch: x64
             target: linux-x86_64
             setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
 
-          # macOS x64 (Intel) - Note: Use 'macos-13' for Intel on GitHub Actions
-          - os: macos-13
+          # macOS x64 (Intel) - Cross-compile on ARM runner
+          - os-label: macOS
+            os-runner: macos-14
             arch: x64
             target: darwin64-x86_64-cc
             setup_cmd: echo "Setup Mac Intel"
 
           # macOS ARM64 (Apple Silicon)
-          - os: macos-14
+          - os-label: macOS
+            os-runner: macos-14
             arch: arm64
             target: darwin64-arm64-cc
             setup_cmd: echo "Setup Mac ARM"
@@ -58,6 +63,12 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
 
+      - name: Remove GNU Link (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+                if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"        
+
       - name: Download OpenSSL Source
         run: |
           curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-${{ github.event.inputs.version }}/openssl-${{ github.event.inputs.version }}.tar.gz
@@ -65,40 +76,34 @@ jobs:
           mv openssl-${{ github.event.inputs.version }} src
 
       # ------------------------------------------------------------------------
-      # CONFIGURE SHARED (MISSING STEP RESTORED)
+      # CONFIGURE & BUILD SHARED
       # ------------------------------------------------------------------------
       
+      # WINDOWS: Use /MT for static CRT linking
       - name: Configure Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
 
+      # UNIX: Standard build (NO /MT flag)
       - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
 
-      # ------------------------------------------------------------------------
-      # BUILD SHARED
-      # ------------------------------------------------------------------------
-      
-      - name: Build Shared (Windows)
-        if: runner.os == 'Windows'
+      - name: Build Shared
         working-directory: src
-        shell: cmd
         run: |
-          nmake
-          nmake install
-
-      - name: Build Shared (Unix)
-        if: runner.os != 'Windows'
-        working-directory: src
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            nmake
+            nmake install
+          else
+            make -j4
+            make install_sw
+          fi
         shell: bash
-        run: |
-          make -j4
-          make install_sw
 
       # ------------------------------------------------------------------------
       # CLEAN
@@ -117,40 +122,34 @@ jobs:
         run: make clean
 
       # ------------------------------------------------------------------------
-      # CONFIGURE STATIC (MISSING STEP RESTORED)
+      # CONFIGURE & BUILD STATIC
       # ------------------------------------------------------------------------
 
+      # WINDOWS: Use /MT
       - name: Configure Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
 
+      # UNIX: Standard build (NO /MT flag)
       - name: Configure Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
 
-      # ------------------------------------------------------------------------
-      # BUILD STATIC
-      # ------------------------------------------------------------------------
-      
-      - name: Build Static (Windows)
-        if: runner.os == 'Windows'
+      - name: Build Static
         working-directory: src
-        shell: cmd
         run: |
-          nmake
-          nmake install
-
-      - name: Build Static (Unix)
-        if: runner.os != 'Windows'
-        working-directory: src
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            nmake
+            nmake install
+          else
+            make -j4
+            make install_sw
+          fi
         shell: bash
-        run: |
-          make -j4
-          make install_sw
         
       # ------------------------------------------------------------------------
       # PACKAGING
@@ -158,11 +157,11 @@ jobs:
       - name: Zip Artifacts
         working-directory: dist
         run: |
-          7z a ../openssl-${{ github.event.inputs.version }}-${{ runner.os }}-${{ matrix.arch }}.zip .
+          7z a ../openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip .
         shell: bash
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openssl-${{ matrix.os }}-${{ matrix.arch }}
+          name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
           path: openssl-*.zip
