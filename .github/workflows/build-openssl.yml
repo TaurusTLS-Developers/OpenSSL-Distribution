@@ -62,6 +62,9 @@ jobs:
       - name: Install NASM (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
+        with:
+          # This tells VS to setup x64 or x86 based on your matrix value
+          arch: ${{ matrix.arch }}
 
       - name: Remove GNU Link (Windows)
         if: runner.os == 'Windows'
