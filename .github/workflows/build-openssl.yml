@@ -34,14 +34,14 @@ jobs:
             target: linux-x86_64
             setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
 
-          # macOS x64 (Intel)
-          - os: macos-13-intel # Intel runner
+          # macOS x64 (Intel) - Note: Use 'macos-13' for Intel on GitHub Actions
+          - os: macos-13
             arch: x64
             target: darwin64-x86_64-cc
             setup_cmd: echo "Setup Mac Intel"
 
           # macOS ARM64 (Apple Silicon)
-          - os: macos-14 # M1 runner
+          - os: macos-14
             arch: arm64
             target: darwin64-arm64-cc
             setup_cmd: echo "Setup Mac ARM"
@@ -52,7 +52,7 @@ jobs:
 
       - name: Install Perl/NASM (Windows Only)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1 # Helper to setup VS environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install NASM (Windows)
         if: runner.os == 'Windows'
@@ -65,14 +65,25 @@ jobs:
           mv openssl-${{ github.event.inputs.version }} src
 
       # ------------------------------------------------------------------------
-      # BUILD 1: SHARED LIBRARIES (.dll / .so / .dylib)
+      # CONFIGURE SHARED (MISSING STEP RESTORED)
       # ------------------------------------------------------------------------
       
-# ------------------------------------------------------------------------
+      - name: Configure Shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        run: |
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
+
+      - name: Configure Shared (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
+
+      # ------------------------------------------------------------------------
       # BUILD SHARED
       # ------------------------------------------------------------------------
       
-      # Windows: Use CMD to ensure 'link.exe' is the MSVC linker
       - name: Build Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
@@ -81,7 +92,6 @@ jobs:
           nmake
           nmake install
 
-      # Linux/macOS: Use Bash
       - name: Build Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
@@ -107,10 +117,25 @@ jobs:
         run: make clean
 
       # ------------------------------------------------------------------------
-      # BUILD 2: STATIC LIBRARIES (.lib / .a)
+      # CONFIGURE STATIC (MISSING STEP RESTORED)
+      # ------------------------------------------------------------------------
+
+      - name: Configure Static (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        run: |
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
+
+      - name: Configure Static (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
+
+      # ------------------------------------------------------------------------
+      # BUILD STATIC
       # ------------------------------------------------------------------------
       
-      # Windows: Use CMD
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
@@ -119,7 +144,6 @@ jobs:
           nmake
           nmake install
 
-      # Linux/macOS: Use Bash
       - name: Build Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
@@ -134,8 +158,6 @@ jobs:
       - name: Zip Artifacts
         working-directory: dist
         run: |
-          # Create a clean zip structure
-          # Result: openssl-3.3.0-windows-x64.zip
           7z a ../openssl-${{ github.event.inputs.version }}-${{ runner.os }}-${{ matrix.arch }}.zip .
         shell: bash
 
