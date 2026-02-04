@@ -16,13 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows 64-bit
-          - os-label: Windows
-            os-runner: windows-latest
-            arch: x64
-            target: VC-WIN64A-ARM
-
-#        include:
 #          # Windows 64-bit
 #          - os-label: Windows
 #            os-runner: windows-latest
@@ -40,12 +33,6 @@ jobs:
 #            os-runner: ubuntu-latest
 #            arch: x64
 #            target: linux-x86_64
-
-          # Linux x64
-          - os-label: "Linux aarch64"
-            os-runner: ubuntu-latest
-            arch: aarch64
-            target: linux-aarch64
             
 #          # macOS x64 (Intel) - Cross-compile on ARM runner
 #          - os-label: macOS
@@ -58,6 +45,26 @@ jobs:
 #            os-runner: macos-14
 #            arch: arm64
 #            target: darwin64-arm64-cc
+
+          # --------------------------------------------------------------------
+          # NEW: ARM64 SUPPORT
+          # --------------------------------------------------------------------
+          
+          # Windows ARM64 (Cross-compile on x64 host)
+          - os-label: Windows
+            os-runner: windows-latest
+            arch: arm64
+            target: VC-WIN64-ARM
+            # ilammy/msvc-dev-cmd handles the cross-env setup via 'arch: arm64'
+
+          # Linux ARM64 (Cross-compile on x64 host)
+          - os-label: Linux
+            os-runner: ubuntu-latest
+            arch: arm64
+            target: linux-aarch64
+            # We need to explicitly set the cross compiler
+            cross_compile_prefix: aarch64-linux-gnu-
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu
 
     steps:
       - name: Checkout Builder Repo
@@ -82,15 +89,22 @@ jobs:
         shell: cmd
         run: |
           if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"
+      
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-
+        run: |
+          sudo apt-get update 
+          sudo apt-get install -y build-essential libtext-template-perl
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+      
       - name: Download OpenSSL Source
         run: |
           curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-${{ github.event.inputs.version }}/openssl-${{ github.event.inputs.version }}.tar.gz
           tar -xzf openssl.tar.gz
           mv openssl-${{ github.event.inputs.version }} src
+      
       # ------------------------------------------------------------------------
       # BUILD SHARED
       # ------------------------------------------------------------------------
@@ -100,11 +114,13 @@ jobs:
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
+      
       - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
+      
       - name: Build Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
@@ -112,12 +128,20 @@ jobs:
         run: |
           nmake
           nmake install
-      - name: Build Shared (Unix)
+          # Try to build docs, ignore failure if perl module missing
+          nmake install_html_docs || echo "Docs generation failed"          
+      
+      - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          # This environment variable tells OpenSSL to use the cross-compiler (e.g. aarch64-linux-gnu-gcc)
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
-          make -j4
-          make install_sw
+          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests      
+          # Try to build docs
+          make install_html_docs || echo "Docs generation failed"          
+          
       # ------------------------------------------------------------------------
       # BUILD STATIC (Clean First)
       # ------------------------------------------------------------------------
@@ -138,11 +162,13 @@ jobs:
         working-directory: src
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
+      
       - name: Configure Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
+
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
@@ -150,76 +176,113 @@ jobs:
         run: |
           nmake
           nmake install
+
       - name: Build Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         run: |
           make -j4
           make install_sw
+          
       # ------------------------------------------------------------------------
       # REARRANGE ARTIFACTS (Create Unified Structure)
       # ------------------------------------------------------------------------
       - name: Rearrange Output
         shell: bash
         run: |
-          mkdir -p dist/final/bin
-          mkdir -p dist/final/lib
-          mkdir -p dist/final/include
-          mkdir -p dist/final/doc
-          mkdir -p dist/final/debug
-          
-          # --- NEW: License File ---
-          # OpenSSL 3.x stores the license in LICENSE.txt in the source root
+          # 1. Create Structure
+          mkdir -p dist/final/{bin,lib,include,doc,debug}
           cp src/LICENSE.txt dist/final/
-          
-          # 1. Headers (From shared build)
+
+          # 2. Headers
           cp -r dist/shared/include/* dist/final/include/
-          
-          # 2. Static Libraries -> lib/
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             cp dist/static/lib/*.lib dist/final/lib/
-          else
-             # Linux/Mac: .a
-             cp dist/static/lib/*.a dist/final/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/final/lib/
+
+          # 3. Documentation (If generated)
+          if [ -d "dist/shared/html" ]; then
+            cp -r dist/shared/html/* dist/final/doc/
+          elif [ -d "dist/shared/share/doc" ]; then
+             cp -r dist/shared/share/doc/* dist/final/doc/
           fi
-          # 3. Dynamic Libraries & Exe -> bin/
+
+          # --------------------------------------------------------------------
+          # WINDOWS LOGIC
+          # --------------------------------------------------------------------
           if [ "${{ runner.os }}" == "Windows" ]; then
-             # Binaries
+             # Static
+             cp dist/static/lib/*.lib dist/final/lib/
+             
+             # Dynamic & PDB
              cp dist/shared/bin/*.dll dist/final/bin/
              cp dist/shared/bin/*.exe dist/final/bin/
-             
-             # Debug Symbols (PDB) -> debug/
              cp dist/shared/bin/*.pdb dist/final/debug/ 2>/dev/null || true
              
-             # Providers (legacy.dll etc)
+             # Providers/Engines (Windows puts them in lib/ usually)
+             # We use 'find' to locate them regardless of path
              mkdir -p dist/final/bin/providers
-             cp dist/shared/lib/ossl-modules/*.dll dist/final/bin/providers/
+             mkdir -p dist/final/bin/engines
              
-             # Debug Symbols for Providers
-             cp dist/shared/lib/ossl-modules/*.pdb dist/final/debug/ 2>/dev/null || true
-             # Engines
-             if [ -d "dist/shared/lib/engines-3" ]; then
-               mkdir -p dist/final/bin/engines
-               cp dist/shared/lib/engines-3/*.dll dist/final/bin/engines/
-               cp dist/shared/lib/engines-3/*.pdb dist/final/debug/ 2>/dev/null || true
-             fi
+             find dist/shared -name "legacy.dll" -exec cp {} dist/final/bin/providers/ \;
+             find dist/shared -name "default.dll" -exec cp {} dist/final/bin/providers/ \;
+             find dist/shared -name "capi.dll" -exec cp {} dist/final/bin/engines/ \; 2>/dev/null || true
+             
+             # PDBs for modules
+             find dist/shared -name "*.pdb" -not -path "*/bin/*" -exec cp {} dist/final/debug/ \;
+
+          # --------------------------------------------------------------------
+          # UNIX LOGIC (Linux & macOS)
+          # --------------------------------------------------------------------
           else
-             # Unix: .so / .dylib
-             cp -P dist/shared/lib/lib*.so* dist/final/bin/ 2>/dev/null || true
-             cp -P dist/shared/lib64/lib*.so* dist/final/bin/ 2>/dev/null || true
-             cp -P dist/shared/lib/lib*.dylib dist/final/bin/ 2>/dev/null || true
+             # Static
+             cp dist/static/lib/*.a dist/final/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/final/lib/
+
+             # Dynamic (Preserve Links)
+             # Use find to locate libs in lib/ or lib64/
+             find dist/shared -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" | xargs -I {} cp -P {} dist/final/bin/
              
              cp dist/shared/bin/openssl dist/final/bin/
-             # Providers
+
+             # Providers & Engines (Robust Find)
              mkdir -p dist/final/bin/providers
-             cp dist/shared/lib*/ossl-modules/*.so dist/final/bin/providers/ 2>/dev/null || true
+             mkdir -p dist/final/bin/engines
              
-             # Engines
-             if ls dist/shared/lib*/engines-3/*.so 1> /dev/null 2>&1; then
-               mkdir -p dist/final/bin/engines
-               cp dist/shared/lib*/engines-3/*.so dist/final/bin/engines/
+             # Copy all provider .so/.dylib files
+             find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/final/bin/providers/ \;
+             
+             # Copy all engine .so/.dylib files
+             find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/final/bin/engines/ \;
+
+             # -----------------------------------------------------------------
+             # MACOS SPECIFIC: DEBUG SYMBOLS & STRIPPING
+             # -----------------------------------------------------------------
+             if [ "${{ runner.os }}" == "macOS" ]; then
+                echo "Processing macOS Debug Symbols..."
+                
+                # Iterate all dylibs in bin
+                for lib in dist/final/bin/*.dylib; do
+                   if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+                      echo "Extracting symbols from $lib"
+                      # 1. Generate dSYM bundle
+                      dsymutil "$lib" -o "$lib.dSYM"
+                      
+                      # 2. Move dSYM to debug folder
+                      mv "$lib.dSYM" dist/final/debug/
+                      
+                      # 3. Strip local symbols to reduce size
+                      strip -x "$lib"
+                   fi
+                done
+                
+                # Handle Engines/Providers
+                for lib in dist/final/bin/providers/*.dylib dist/final/bin/engines/*.dylib; do
+                   if [ -f "$lib" ]; then
+                      dsymutil "$lib" -o "$lib.dSYM"
+                      mv "$lib.dSYM" dist/final/debug/
+                      strip -x "$lib"
+                   fi
+                done
              fi
           fi
+          
       # ------------------------------------------------------------------------
       # PACKAGING
       # ------------------------------------------------------------------------
