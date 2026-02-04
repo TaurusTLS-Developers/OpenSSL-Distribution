@@ -118,9 +118,12 @@ jobs:
       - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          # This environment variable tells OpenSSL to use the cross-compiler (e.g. aarch64-linux-gnu-gcc)
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
-      
+                
       - name: Build Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
@@ -131,14 +134,12 @@ jobs:
           # Try to build docs, ignore failure if perl module missing
           nmake install_html_docs || echo "Docs generation failed"          
       
-      - name: Configure Shared (Unix)
+      - name: Build Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
-        env:
-          # This environment variable tells OpenSSL to use the cross-compiler (e.g. aarch64-linux-gnu-gcc)
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
-          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests      
+          make -j4
+          make install_sw
           # Try to build docs
           make install_html_docs || echo "Docs generation failed"          
           
