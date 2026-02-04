@@ -72,18 +72,26 @@ jobs:
         run: |
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests /MT
 
-      - name: Build Shared
+      - name: Build Shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          ${{ matrix.setup_cmd }}
+          nmake
+          nmake install
+          # Try to build docs, ignore failure if perl module missing
+          nmake install_html_docs || echo "Docs generation failed"          
+          
+      - name: Build Shared (Unix)
+        if: runner.os != 'Windows'
         working-directory: src
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            nmake
-            nmake install
-          else
-            make -j4
-            make install_sw
-          fi
-        shell: bash
-
+          make -j4
+          make install_sw
+          # Try to build docs
+          make install_html_docs || echo "Docs generation failed"
+          
       - name: Clean Source
         working-directory: src
         run: |
