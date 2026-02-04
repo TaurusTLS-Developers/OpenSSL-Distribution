@@ -227,6 +227,15 @@ jobs:
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
 
 
+      - name: Build Static (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          ${{ matrix.setup_cmd }}
+          nmake
+          nmake install
+          
       - name: Build Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
         working-directory: src
