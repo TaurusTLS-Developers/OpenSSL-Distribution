@@ -1,0 +1,261 @@
+name: Build OpenSSL 3.x Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenSSL Version (e.g. 3.3.0)'
+        required: true
+        default: '3.3.0'
+
+jobs:
+  build:
+    name: ${{ matrix.os-label }} - ${{ matrix.arch }}
+    runs-on: ${{ matrix.os-runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows 64-bit
+          - os-label: Windows
+            os-runner: windows-latest
+            arch: x64
+            target: VC-WIN64A-ARM
+
+#        include:
+#          # Windows 64-bit
+#          - os-label: Windows
+#            os-runner: windows-latest
+#            arch: x64
+#            target: VC-WIN64A
+
+#          # Windows 32-bit
+#          - os-label: Windows
+#            os-runner: windows-latest
+#            arch: x86
+#            target: VC-WIN32
+
+#          # Linux x64
+#          - os-label: "Linux x64"
+#            os-runner: ubuntu-latest
+#            arch: x64
+#            target: linux-x86_64
+
+          # Linux x64
+          - os-label: "Linux aarch64"
+            os-runner: ubuntu-latest
+            arch: aarch64
+            target: linux-aarch64
+            
+#          # macOS x64 (Intel) - Cross-compile on ARM runner
+#          - os-label: macOS
+#            os-runner: macos-14
+#            arch: x64
+#            target: darwin64-x86_64-cc
+
+#          # macOS ARM64 (Apple Silicon)
+#          - os-label: macOS
+#            os-runner: macos-14
+#            arch: arm64
+#            target: darwin64-arm64-cc
+
+    steps:
+      - name: Checkout Builder Repo
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------------
+      # ENVIRONMENT SETUP
+      # ------------------------------------------------------------------------
+      
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }} # Fix for LNK1112 (x86 vs x64)
+
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Remove GNU Link (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Download OpenSSL Source
+        run: |
+          curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-${{ github.event.inputs.version }}/openssl-${{ github.event.inputs.version }}.tar.gz
+          tar -xzf openssl.tar.gz
+          mv openssl-${{ github.event.inputs.version }} src
+      # ------------------------------------------------------------------------
+      # BUILD SHARED
+      # ------------------------------------------------------------------------
+      
+      - name: Configure Shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        run: |
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
+      - name: Configure Shared (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
+      - name: Build Shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          nmake
+          nmake install
+      - name: Build Shared (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          make -j4
+          make install_sw
+      # ------------------------------------------------------------------------
+      # BUILD STATIC (Clean First)
+      # ------------------------------------------------------------------------
+
+      - name: Clean Source (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: nmake clean
+
+      - name: Clean Source (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: make clean
+
+      - name: Configure Static (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        run: |
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
+      - name: Configure Static (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
+      - name: Build Static (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src
+        shell: cmd
+        run: |
+          nmake
+          nmake install
+      - name: Build Static (Unix)
+        if: runner.os != 'Windows'
+        working-directory: src
+        run: |
+          make -j4
+          make install_sw
+      # ------------------------------------------------------------------------
+      # REARRANGE ARTIFACTS (Create Unified Structure)
+      # ------------------------------------------------------------------------
+      - name: Rearrange Output
+        shell: bash
+        run: |
+          mkdir -p dist/final/bin
+          mkdir -p dist/final/lib
+          mkdir -p dist/final/include
+          mkdir -p dist/final/doc
+          mkdir -p dist/final/debug
+          
+          # --- NEW: License File ---
+          # OpenSSL 3.x stores the license in LICENSE.txt in the source root
+          cp src/LICENSE.txt dist/final/
+          
+          # 1. Headers (From shared build)
+          cp -r dist/shared/include/* dist/final/include/
+          
+          # 2. Static Libraries -> lib/
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             cp dist/static/lib/*.lib dist/final/lib/
+          else
+             # Linux/Mac: .a
+             cp dist/static/lib/*.a dist/final/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/final/lib/
+          fi
+          # 3. Dynamic Libraries & Exe -> bin/
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             # Binaries
+             cp dist/shared/bin/*.dll dist/final/bin/
+             cp dist/shared/bin/*.exe dist/final/bin/
+             
+             # Debug Symbols (PDB) -> debug/
+             cp dist/shared/bin/*.pdb dist/final/debug/ 2>/dev/null || true
+             
+             # Providers (legacy.dll etc)
+             mkdir -p dist/final/bin/providers
+             cp dist/shared/lib/ossl-modules/*.dll dist/final/bin/providers/
+             
+             # Debug Symbols for Providers
+             cp dist/shared/lib/ossl-modules/*.pdb dist/final/debug/ 2>/dev/null || true
+             # Engines
+             if [ -d "dist/shared/lib/engines-3" ]; then
+               mkdir -p dist/final/bin/engines
+               cp dist/shared/lib/engines-3/*.dll dist/final/bin/engines/
+               cp dist/shared/lib/engines-3/*.pdb dist/final/debug/ 2>/dev/null || true
+             fi
+          else
+             # Unix: .so / .dylib
+             cp -P dist/shared/lib/lib*.so* dist/final/bin/ 2>/dev/null || true
+             cp -P dist/shared/lib64/lib*.so* dist/final/bin/ 2>/dev/null || true
+             cp -P dist/shared/lib/lib*.dylib dist/final/bin/ 2>/dev/null || true
+             
+             cp dist/shared/bin/openssl dist/final/bin/
+             # Providers
+             mkdir -p dist/final/bin/providers
+             cp dist/shared/lib*/ossl-modules/*.so dist/final/bin/providers/ 2>/dev/null || true
+             
+             # Engines
+             if ls dist/shared/lib*/engines-3/*.so 1> /dev/null 2>&1; then
+               mkdir -p dist/final/bin/engines
+               cp dist/shared/lib*/engines-3/*.so dist/final/bin/engines/
+             fi
+          fi
+      # ------------------------------------------------------------------------
+      # PACKAGING
+      # ------------------------------------------------------------------------
+      
+      # Windows: ZIP
+      - name: Pack Windows
+        if: runner.os == 'Windows'
+        working-directory: dist/final
+        # Explicitly output to Workspace Root
+        run: |
+          7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
+        shell: bash
+
+      # macOS: ZIP
+      - name: Pack macOS
+        if: runner.os == 'macOS'
+        working-directory: dist/final
+        run: |
+          zip --symlinks -r "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
+        shell: bash
+
+      # Linux: TAR.GZ
+      - name: Pack Linux
+        if: runner.os == 'Linux'
+        working-directory: dist/final
+        run: |
+          tar -czvf "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.tar.gz" .
+        shell: bash
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
+          compression-level: 0 
+          # Look in Workspace Root explicitly
+          path: |
+            ${{ github.workspace }}/openssl-*.zip
+            ${{ github.workspace }}/openssl-*.tar.gz
+          if-no-files-found: warn
