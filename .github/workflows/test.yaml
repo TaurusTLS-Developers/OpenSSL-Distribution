@@ -7,3 +7,9 @@ on:
         description: 'OpenSSL Version (e.g. 3.3.0)'
         required: true
         default: '3.3.0'
+jobs:
+  dummy_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dummy Step
+        run: echo "This is a dummy workflow run. Reason: ${{ github.event.inputs.reason }}"
