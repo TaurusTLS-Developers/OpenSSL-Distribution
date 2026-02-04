@@ -1,4 +1,4 @@
-name: Build OpenSSL 3.x Test
+name: Build OpenSSL 3.x
 
 on:
   workflow_dispatch:
@@ -21,50 +21,51 @@ jobs:
             os-runner: windows-latest
             arch: x64
             target: VC-WIN64A
-
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          
           # Windows 32-bit
           - os-label: Windows
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
 
-          # Linux x64
-          - os-label: "Linux x64"
-            os-runner: ubuntu-latest
-            arch: x64
-            target: linux-x86_64
-            
-          # macOS x64 (Intel) - Cross-compile on ARM runner
-          - os-label: macOS
-            os-runner: macos-14
-            arch: x64
-            target: darwin64-x86_64-cc
-
-          # macOS ARM64 (Apple Silicon)
-          - os-label: macOS
-            os-runner: macos-14
-            arch: arm64
-            target: darwin64-arm64-cc
-
-          # --------------------------------------------------------------------
-          # NEW: ARM64 SUPPORT
-          # --------------------------------------------------------------------
-          
           # Windows ARM64 (Cross-compile on x64 host)
           - os-label: Windows
             os-runner: windows-latest
             arch: arm64
             target: VC-WIN64-ARM
-            # ilammy/msvc-dev-cmd handles the cross-env setup via 'arch: arm64'
+            # Note: vcvarsamd64_arm64.bat sets up x64 host -> arm64 target
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
+
+          # Linux x64
+          - os-label: Linux
+            os-runner: ubuntu-latest
+            arch: x64
+            target: linux-x86_64
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
 
           # Linux ARM64 (Cross-compile on x64 host)
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: arm64
             target: linux-aarch64
-            # We need to explicitly set the cross compiler
             cross_compile_prefix: aarch64-linux-gnu-
             setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu
+
+          # macOS x64 (Intel) - Cross-compile on ARM runner
+          - os-label: macOS
+            os-runner: macos-14
+            arch: x64
+            target: darwin64-x86_64-cc
+            setup_cmd: echo "Setup Mac Intel"
+
+          # macOS ARM64 (Apple Silicon)
+          - os-label: macOS
+            os-runner: macos-14
+            arch: arm64
+            target: darwin64-arm64-cc
+            setup_cmd: echo "Setup Mac ARM"
 
     steps:
       - name: Checkout Builder Repo
@@ -74,11 +75,8 @@ jobs:
       # ENVIRONMENT SETUP
       # ------------------------------------------------------------------------
       
-      - name: Setup MSVC (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.arch }} # Fix for LNK1112 (x86 vs x64)
+      # We skip ilammy/msvc-dev-cmd because we will call vcvars manually in each step
+      # to ensure the environment is correct for the specific shell instance.
 
       - name: Install NASM (Windows)
         if: runner.os == 'Windows'
@@ -92,12 +90,7 @@ jobs:
       
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update 
-          sudo apt-get install -y build-essential libtext-template-perl
-          if [ "${{ matrix.arch }}" == "arm64" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-          fi
+        run: ${{ matrix.setup_cmd }}
       
       - name: Download OpenSSL Source
         run: |
@@ -112,14 +105,15 @@ jobs:
       - name: Configure Shared (Windows)
         if: runner.os == 'Windows'
         working-directory: src
+        shell: cmd
         run: |
+          ${{ matrix.setup_cmd }}
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
       
       - name: Configure Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
         env:
-          # This environment variable tells OpenSSL to use the cross-compiler (e.g. aarch64-linux-gnu-gcc)
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
@@ -129,18 +123,19 @@ jobs:
         working-directory: src
         shell: cmd
         run: |
+          ${{ matrix.setup_cmd }}
           nmake
           nmake install
-          # Try to build docs, ignore failure if perl module missing
           nmake install_html_docs || echo "Docs generation failed"          
       
       - name: Build Shared (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           make -j4
           make install_sw
-          # Try to build docs
           make install_html_docs || echo "Docs generation failed"          
           
       # ------------------------------------------------------------------------
@@ -151,22 +146,30 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: src
         shell: cmd
-        run: nmake clean
+        run: |
+          ${{ matrix.setup_cmd }}
+          nmake clean
 
       - name: Clean Source (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: make clean
 
       - name: Configure Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
+        shell: cmd
         run: |
+          ${{ matrix.setup_cmd }}
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
       
       - name: Configure Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
 
@@ -175,105 +178,65 @@ jobs:
         working-directory: src
         shell: cmd
         run: |
+          ${{ matrix.setup_cmd }}
           nmake
           nmake install
 
       - name: Build Static (Unix)
         if: runner.os != 'Windows'
         working-directory: src
+        env:
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           make -j4
           make install_sw
           
       # ------------------------------------------------------------------------
-      # REARRANGE ARTIFACTS (Create Unified Structure)
+      # REARRANGE ARTIFACTS
       # ------------------------------------------------------------------------
       - name: Rearrange Output
         shell: bash
         run: |
-          # 1. Create Structure
           mkdir -p dist/final/{bin,lib,include,doc,debug}
           cp src/LICENSE.txt dist/final/
-
-          # 2. Headers
           cp -r dist/shared/include/* dist/final/include/
 
-          # 3. Documentation (If generated)
           if [ -d "dist/shared/html" ]; then
             cp -r dist/shared/html/* dist/final/doc/
           elif [ -d "dist/shared/share/doc" ]; then
              cp -r dist/shared/share/doc/* dist/final/doc/
           fi
 
-          # --------------------------------------------------------------------
-          # WINDOWS LOGIC
-          # --------------------------------------------------------------------
           if [ "${{ runner.os }}" == "Windows" ]; then
-             # Static
              cp dist/static/lib/*.lib dist/final/lib/
-             
-             # Dynamic & PDB
              cp dist/shared/bin/*.dll dist/final/bin/
              cp dist/shared/bin/*.exe dist/final/bin/
              cp dist/shared/bin/*.pdb dist/final/debug/ 2>/dev/null || true
              
-             # Providers/Engines (Windows puts them in lib/ usually)
-             # We use 'find' to locate them regardless of path
              mkdir -p dist/final/bin/providers
              mkdir -p dist/final/bin/engines
-             
              find dist/shared -name "legacy.dll" -exec cp {} dist/final/bin/providers/ \;
              find dist/shared -name "default.dll" -exec cp {} dist/final/bin/providers/ \;
              find dist/shared -name "capi.dll" -exec cp {} dist/final/bin/engines/ \; 2>/dev/null || true
-             
-             # PDBs for modules
              find dist/shared -name "*.pdb" -not -path "*/bin/*" -exec cp {} dist/final/debug/ \;
-
-          # --------------------------------------------------------------------
-          # UNIX LOGIC (Linux & macOS)
-          # --------------------------------------------------------------------
           else
-             # Static
              cp dist/static/lib/*.a dist/final/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/final/lib/
-
-             # Dynamic (Preserve Links)
-             # Use find to locate libs in lib/ or lib64/
              find dist/shared -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" | xargs -I {} cp -P {} dist/final/bin/
-             
              cp dist/shared/bin/openssl dist/final/bin/
 
-             # Providers & Engines (Robust Find)
              mkdir -p dist/final/bin/providers
              mkdir -p dist/final/bin/engines
-             
-             # Copy all provider .so/.dylib files
              find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/final/bin/providers/ \;
-             
-             # Copy all engine .so/.dylib files
              find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/final/bin/engines/ \;
 
-             # -----------------------------------------------------------------
-             # MACOS SPECIFIC: DEBUG SYMBOLS & STRIPPING
-             # -----------------------------------------------------------------
              if [ "${{ runner.os }}" == "macOS" ]; then
-                echo "Processing macOS Debug Symbols..."
-                
-                # Iterate all dylibs in bin
                 for lib in dist/final/bin/*.dylib; do
                    if [ -f "$lib" ] && [ ! -L "$lib" ]; then
-                      echo "Extracting symbols from $lib"
-                      # 1. Generate dSYM bundle
                       dsymutil "$lib" -o "$lib.dSYM"
-                      
-                      # 2. Move dSYM to debug folder
                       mv "$lib.dSYM" dist/final/debug/
-                      
-                      # 3. Strip local symbols to reduce size
                       strip -x "$lib"
                    fi
                 done
-                
-                # Handle Engines/Providers
                 for lib in dist/final/bin/providers/*.dylib dist/final/bin/engines/*.dylib; do
                    if [ -f "$lib" ]; then
                       dsymutil "$lib" -o "$lib.dSYM"
@@ -285,19 +248,16 @@ jobs:
           fi
           
       # ------------------------------------------------------------------------
-      # PACKAGING
+      # PACKAGING & UPLOAD
       # ------------------------------------------------------------------------
       
-      # Windows: ZIP
       - name: Pack Windows
         if: runner.os == 'Windows'
         working-directory: dist/final
-        # Explicitly output to Workspace Root
         run: |
           7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
         shell: bash
 
-      # macOS: ZIP
       - name: Pack macOS
         if: runner.os == 'macOS'
         working-directory: dist/final
@@ -305,7 +265,6 @@ jobs:
           zip --symlinks -r "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
         shell: bash
 
-      # Linux: TAR.GZ
       - name: Pack Linux
         if: runner.os == 'Linux'
         working-directory: dist/final
@@ -318,8 +277,8 @@ jobs:
         with:
           name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
           compression-level: 0 
-          # Look in Workspace Root explicitly
           path: |
             ${{ github.workspace }}/openssl-*.zip
             ${{ github.workspace }}/openssl-*.tar.gz
           if-no-files-found: warn
+          
