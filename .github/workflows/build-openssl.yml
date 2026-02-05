@@ -63,7 +63,7 @@ jobs:
             os-runner: ubuntu-latest
             arch: arm64
             target: android-arm64
-            ndk_ver: 26.1.10909125 # Default on GH Actions ubuntu-latest
+            ndk_ver: 26.1.10909125
           - os-label: Android
             os-runner: ubuntu-latest
             arch: arm
@@ -114,9 +114,7 @@ jobs:
       - name: Setup Android NDK
         if: matrix.os-label == 'Android'
         run: |
-          # Set NDK Root from environment or default
           echo "ANDROID_NDK_ROOT=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-          # Add Toolchain to PATH
           echo "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Download OpenSSL Source
@@ -143,7 +141,21 @@ jobs:
         env:
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
-          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests
+          # 1. Define Standard Paths
+          OPENSSLDIR="/usr/lib/ssl"
+          PREFIX="/usr/local"
+          
+          if [ "${{ runner.os }}" == "macOS" ]; then
+             OPENSSLDIR="/private/etc/ssl"
+          fi
+          
+          # 2. Configure
+          # -Wl,-rpath,\$$ORIGIN ensures the binary looks in its own folder for dependencies
+          ./Configure ${{ matrix.target }} \
+            --prefix=$PREFIX \
+            --openssldir=$OPENSSLDIR \
+            shared no-tests \
+            "-Wl,-rpath,\$$ORIGIN"
                 
       - name: Build Shared (Windows)
         if: runner.os == 'Windows' && matrix.static_only != true
@@ -162,15 +174,32 @@ jobs:
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           make -j4
-          make install_sw
-          make install_html_docs || echo "Docs generation failed"          
+          
+          # 1. Install to Staging Area
+          STAGING_DIR="_staging"
+          make install_sw DESTDIR=$(pwd)/$STAGING_DIR
+          
+          # 2. Move to Expected Output Directory (dist/shared)
+          mkdir -p ../dist/shared
+          cp -r $STAGING_DIR/usr/local/* ../dist/shared/
+          
+          # 3. Docs
+          make install_html_docs DESTDIR=$(pwd)/$STAGING_DIR || echo "Docs generation failed"          
+          if [ -d "$STAGING_DIR/usr/local/html" ]; then
+             mkdir -p ../dist/shared/html
+             cp -r $STAGING_DIR/usr/local/html/* ../dist/shared/html/
+          fi
+          if [ -d "$STAGING_DIR/usr/local/share/doc" ]; then
+             mkdir -p ../dist/shared/share/doc
+             cp -r $STAGING_DIR/usr/local/share/doc/* ../dist/shared/share/doc/
+          fi
           
       # ------------------------------------------------------------------------
-      # CLEAN
+      # BUILD STATIC
       # ------------------------------------------------------------------------
 
       - name: Clean Source (Windows)
-        if: runner.os == 'Windows' && matrix.static_only != true
+        if: runner.os == 'Windows'
         working-directory: src
         shell: cmd
         run: |
@@ -180,12 +209,9 @@ jobs:
       - name: Clean Source (Unix)
         if: runner.os != 'Windows' && matrix.static_only != true
         working-directory: src
-        shell: bash
+        env:
+          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: make clean
-
-      # ------------------------------------------------------------------------
-      # BUILD STATIC
-      # ------------------------------------------------------------------------
 
       - name: Configure Static (Windows)
         if: runner.os == 'Windows'
@@ -201,31 +227,30 @@ jobs:
         env:
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
-          # --------------------------------------------------------------------
-          # iOS FIX: Resolve Sysroot for ios64-cross
-          # --------------------------------------------------------------------
+          # 1. Define Standard Paths
+          OPENSSLDIR="/usr/lib/ssl"
+          PREFIX="/usr/local"
+          
+          if [ "${{ runner.os }}" == "macOS" ]; then
+             OPENSSLDIR="/private/etc/ssl"
+          fi
+
+          # 2. iOS Specifics
+          IOS_FLAGS=""
           if [ "${{ matrix.target }}" == "ios64-cross" ]; then
-             echo "Configuring for iOS Device (ios64-cross)..."
-             
-             # 1. Find the absolute path to the iPhoneOS SDK
              SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-             if [ -z "$SDK_PATH" ]; then
-               echo "Error: Could not find iPhoneOS SDK"
-               exit 1
-             fi
-             echo "Found SDK: $SDK_PATH"
-             
-             # 2. Export CFLAGS with the sysroot and explicit arch
-             # We assume CC=clang is default, but setting it explicitly is safer
              export CC=clang
-             export CFLAGS="-isysroot ${SDK_PATH} -arch arm64"
-             
-             # 3. Clean up potential env interference
+             IOS_FLAGS="-isysroot ${SDK_PATH} -arch arm64"
              unset CROSS_TOP
              unset CROSS_SDK
           fi
-          ./Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests
 
+          # 3. Configure
+          ./Configure ${{ matrix.target }} \
+             --prefix=$PREFIX \
+             --openssldir=$OPENSSLDIR \
+             no-shared no-tests \
+             $IOS_FLAGS
 
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
@@ -235,7 +260,7 @@ jobs:
           ${{ matrix.setup_cmd }}
           nmake
           nmake install
-          
+
       - name: Build Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
         working-directory: src
@@ -243,7 +268,14 @@ jobs:
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: |
           make -j4
-          make install_sw
+          
+          # 1. Install to Staging Area
+          STAGING_DIR="_staging_static"
+          make install_sw DESTDIR=$(pwd)/$STAGING_DIR
+          
+          # 2. Move to Expected Output Directory (dist/static)
+          mkdir -p ../dist/static
+          cp -r $STAGING_DIR/usr/local/* ../dist/static/
           
       # ------------------------------------------------------------------------
       # REARRANGE ARTIFACTS
@@ -338,13 +370,12 @@ jobs:
                
                # C. Determine Strip Tool & Flags
                STRIP_BIN="strip"
-               STRIP_FLAGS="-s" # Default to aggressive strip (-s) for Linux x64
+               STRIP_FLAGS="-s" 
 
                if [ "${{ matrix.os-label }}" == "Android" ]; then
                   STRIP_BIN="llvm-strip"
                   STRIP_FLAGS="--strip-unneeded"
                elif [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
-                  # Linux ARM64 Cross-Compile
                   STRIP_BIN="${{ matrix.cross_compile_prefix }}strip"
                   STRIP_FLAGS="--strip-unneeded"
                elif [ "${{ runner.os }}" == "macOS" ]; then
@@ -355,13 +386,12 @@ jobs:
                echo "Stripping Runtime binaries using: $STRIP_BIN $STRIP_FLAGS"
 
                # D. Execute Strip on Runtime folder
-               # FIX: Ensure files are writable before stripping!
                chmod -R u+w dist/runtime
-               
                find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -print0 | xargs -0 -I {} $STRIP_BIN $STRIP_FLAGS {}
                
-               # E. macOS Dev Debug Symbols (dSYM)
+               # E. macOS Specifics (dSYM & Relocatability)
                if [ "${{ runner.os }}" == "macOS" ]; then
+                  # dSYM for Dev
                   for lib in dist/dev/bin/*.dylib dist/dev/bin/providers/*.dylib dist/dev/bin/engines/*.dylib; do
                      if [ -f "$lib" ] && [ ! -L "$lib" ]; then
                         dsymutil "$lib" -o "$lib.dSYM"
@@ -369,12 +399,83 @@ jobs:
                         strip -x "$lib"
                      fi
                   done
+                  
+                  # Relocatability (install_name_tool) for Runtime
+                  echo "Making macOS binaries relocatable..."
+                  OLD_PATH="/usr/local/lib" # Matches our Configure --prefix
+                  
+                  # Fix IDs
+                  for lib in dist/runtime/lib*.dylib; do
+                     if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+                        LIB_NAME=$(basename "$lib")
+                        install_name_tool -id "@rpath/$LIB_NAME" "$lib"
+                     fi
+                  done
+                  
+                  # Fix Dependencies
+                  TARGETS=$(find dist/runtime -maxdepth 1 -type f \( -name "*.dylib" -o -name "openssl" \))
+                  for target in $TARGETS; do
+                     # Note: OpenSSL 3.x with --prefix might link to /usr/local/lib or /usr/local/lib64 depending on config
+                     # We loosely grep for the lib name to be safe
+                     otool -L "$target" | grep "libcrypto\|libssl" | grep -v "@rpath" | awk '{print $1}' | while read dep; do
+                        DEP_NAME=$(basename "$dep")
+                        install_name_tool -change "$dep" "@loader_path/$DEP_NAME" "$target"
+                     done
+                     install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+                  done
                fi
             fi
           fi
 
           # 5. Cleanup Empty Directories
           find dist -type d -empty -delete
+
+      # ------------------------------------------------------------------------
+      # SMOKE TEST (Verify Relocatable Binaries)
+      # ------------------------------------------------------------------------
+      - name: Smoke Test
+        if: matrix.static_only != true
+        shell: bash
+        run: |
+          echo "=== Starting Smoke Test ==="
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             EXE="./dist/runtime/openssl.exe"
+          else
+             EXE="./dist/runtime/openssl"
+          fi
+
+          if [ ! -f "$EXE" ]; then
+             echo "Error: Executable not found at $EXE"
+             exit 1
+          fi
+
+          # Check if we can execute on this runner
+          SHOULD_RUN=false
+
+          if [ "${{ matrix.os-label }}" == "Android" ]; then
+             echo "Skipping: Cannot run Android binaries on Ubuntu host."
+          elif [ "${{ matrix.os-label }}" == "iOS" ]; then
+             echo "Skipping: Cannot run iOS binaries."
+          elif [ "${{ runner.os }}" == "Linux" ] && [ "${{ matrix.arch }}" != "x64" ]; then
+             echo "Skipping: Cannot run ${{ matrix.arch }} binaries on x64 Linux host."
+          elif [ "${{ runner.os }}" == "Windows" ] && [ "${{ matrix.arch }}" == "arm64" ]; then
+             echo "Skipping: Cannot run Windows ARM64 binaries on x64 Windows host."
+          else
+             # Valid: Win x64/x86, Linux x64, macOS x64/ARM64
+             SHOULD_RUN=true
+          fi
+
+          if [ "$SHOULD_RUN" == "true" ]; then
+             echo "Attempting to run: $EXE version -a"
+             
+             # This confirms RPATH/$ORIGIN/@loader_path works
+             chmod +x $EXE
+             $EXE version -a
+             
+             echo ">>> SUCCESS: Binary loaded and ran."
+          fi
+
       # ------------------------------------------------------------------------
       # PACKAGING
       # ------------------------------------------------------------------------
@@ -403,7 +504,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openssl-${{ github.event.inputs.version }}-${{ matrix.arch }}
+          name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
           compression-level: 0 
           path: |
             ${{ github.workspace }}/openssl-*.zip
