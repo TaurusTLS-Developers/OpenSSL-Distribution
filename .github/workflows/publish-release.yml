@@ -123,5 +123,5 @@ jobs:
             
             echo "  > Uploading as: $LABEL"
             
-            gh release upload "${{ inputs.tag_name }}" "$file" --clobber --label "$LABEL"
+            gh release upload "${{ inputs.tag_name }}" "$file" --clobber -m "$LABEL"
           done
