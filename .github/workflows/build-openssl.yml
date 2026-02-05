@@ -252,14 +252,13 @@ jobs:
         shell: bash
         run: |
           # 1. Create Staging Areas
-          # Runtime is flat, Dev is structured
           mkdir -p dist/runtime
           mkdir -p dist/dev/bin
           mkdir -p dist/dev/lib
           mkdir -p dist/dev/include
           mkdir -p dist/dev/doc
+          mkdir -p dist/dev/debug
           
-          # License
           cp src/LICENSE.txt dist/runtime/
           cp src/LICENSE.txt dist/dev/
           
@@ -274,7 +273,6 @@ jobs:
             cp -r dist/shared/html/* dist/dev/doc/
           elif [ -d "dist/shared/share/doc" ]; then
              cp -r dist/shared/share/doc/* dist/dev/doc/
-          # Fallback for static-only builds (try static doc path if exists)
           elif [ -d "dist/static/html" ]; then
              cp -r dist/static/html/* dist/dev/doc/
           elif [ -d "dist/static/share/doc" ]; then
@@ -288,7 +286,7 @@ jobs:
              cp dist/static/lib/*.a dist/dev/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/dev/lib/
           fi
 
-          # 4. Populate Shared Binaries (Runtime vs Dev)
+          # 4. Populate Shared Binaries (Runtime + Dev)
           if [ "${{ matrix.static_only }}" != "true" ]; then
           
             # --- WINDOWS ---
@@ -300,19 +298,16 @@ jobs:
                # Dev (Structured, With PDBs)
                cp dist/shared/bin/*.dll dist/dev/bin/
                cp dist/shared/bin/*.exe dist/dev/bin/
-               cp dist/shared/bin/*.pdb dist/dev/bin/ 2>/dev/null || true
+               cp dist/shared/bin/*.pdb dist/dev/debug/ 2>/dev/null || true
                
                # Providers/Engines Logic
-               # Runtime: Flattened into subfolders
                mkdir -p dist/runtime/providers dist/runtime/engines
                mkdir -p dist/dev/bin/providers dist/dev/bin/engines
                
-               # Find and sort DLLs
                find dist/shared/lib -name "*.dll" | while read file; do
                    if [[ "$file" == *"ossl-modules"* ]]; then
                        cp "$file" dist/runtime/providers/
                        cp "$file" dist/dev/bin/providers/
-                       # Copy PDB for Dev
                        pdb="${file%.dll}.pdb"
                        if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/providers/; fi
                    elif [[ "$file" == *"engines"* ]]; then
@@ -322,93 +317,67 @@ jobs:
                        if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/engines/; fi
                    fi
                done
+               find dist/shared/lib -name "*.pdb" -exec cp {} dist/dev/debug/ \;
 
             # --- UNIX (Linux/macOS/Android) ---
             else
-               # Identify Libs
-               # Note: Use -P to preserve symlinks if possible, but for flat runtime we might want physical copies.
-               # 'cp -L' (dereference) ensures the user gets the actual file, not a broken link if they move it.
-               
-               # Runtime (Copy to root)
-               find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/runtime/ \;
-               
-               # Dev (Copy to bin/)
+               # A. Copy to Dev (Keep symbols / Original state)
+               # ----------------------------------------------
                find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/dev/bin/ \;
                
-               # Executable
                if [ -f "dist/shared/bin/openssl" ]; then
-                 cp dist/shared/bin/openssl dist/runtime/
                  cp dist/shared/bin/openssl dist/dev/bin/
                fi
 
-               # Providers & Engines
-               mkdir -p dist/runtime/providers dist/runtime/engines
                mkdir -p dist/dev/bin/providers dist/dev/bin/engines
-               
-               find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/runtime/providers/ \;
-               find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/runtime/engines/ \;
-               
-               # Sync Modules to Dev
-               cp dist/runtime/providers/* dist/dev/bin/providers/ 2>/dev/null || true
-               cp dist/runtime/engines/* dist/dev/bin/engines/ 2>/dev/null || true
+               find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/providers/ \;
+               find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/engines/ \;
 
-               # --- STRIPPING & SYMBOLS ---
+               # B. Copy Dev to Runtime (Then Strip)
+               # -----------------------------------
+               cp -r dist/dev/bin/* dist/runtime/
+               # Move providers/engines to root of runtime (Flatten logic)
+               if [ -d "dist/runtime/providers" ]; then mv dist/runtime/providers/* dist/runtime/providers/ 2>/dev/null || true; fi
                
-               # Runtime: Strip everything
-               if [ "${{ runner.os }}" == "Linux" ] || [ "${{ runner.os }}" == "macOS" ]; then
-                  # Strip libs and exe in runtime
-                  find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec strip -x {} + 2>/dev/null || true
+               # C. Determine Strip Tool & Flags
+               # -----------------------------------
+               STRIP_BIN="strip"
+               STRIP_FLAGS=""
+
+               if [ "${{ matrix.os-label }}" == "Android" ]; then
+                  # Android NDK provides llvm-strip
+                  STRIP_BIN="llvm-strip"
+                  STRIP_FLAGS="--strip-unneeded"
+               elif [ "${{ runner.os }}" == "Linux" ]; then
+                  # Use cross-compiler prefix (e.g. aarch64-linux-gnu-strip) or default strip
+                  STRIP_BIN="${{ matrix.cross_compile_prefix }}strip"
+                  STRIP_FLAGS="--strip-unneeded"
+               elif [ "${{ runner.os }}" == "macOS" ]; then
+                  STRIP_BIN="strip"
+                  STRIP_FLAGS="-x"
                fi
+
+               echo "Stripping Runtime binaries using: $STRIP_BIN $STRIP_FLAGS"
+
+               # D. Execute Strip on Runtime folder
+               # ----------------------------------
+               find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -print0 | xargs -0 -I {} $STRIP_BIN $STRIP_FLAGS {}
                
-               # macOS Dev: dSYM Bundles
+               # E. macOS Dev Debug Symbols (dSYM)
+               # ---------------------------------
                if [ "${{ runner.os }}" == "macOS" ]; then
-                  # Generate dSYM for Dev binaries
                   for lib in dist/dev/bin/*.dylib dist/dev/bin/providers/*.dylib dist/dev/bin/engines/*.dylib; do
                      if [ -f "$lib" ] && [ ! -L "$lib" ]; then
                         dsymutil "$lib" -o "$lib.dSYM"
-                        # Strip the binary in Dev ONLY after generating dSYM
+                        mv "$lib.dSYM" dist/dev/debug/
+                        # Optional: Strip Dev binary after extracting dSYM? 
+                        # Standard practice is yes, but if you want full symbols in Dev binary, skip this.
                         strip -x "$lib"
                      fi
                   done
                fi
-               # Linux/Android Dev: We do nothing. The .so files retain their embedded symbols.
             fi
           fi
 
           # 5. Cleanup Empty Directories
           find dist -type d -empty -delete
-
-      # ------------------------------------------------------------------------
-      # PACKAGING
-      # ------------------------------------------------------------------------
-      
-      - name: Pack Runtime
-        if: matrix.static_only != true
-        working-directory: dist/runtime
-        run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
-          else
-             tar -czvf "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.tar.gz" .
-          fi
-        shell: bash
-
-      - name: Pack Dev
-        working-directory: dist/dev
-        run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}-dev.zip" .
-          else
-             tar -czvf "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}-dev.tar.gz" .
-          fi
-        shell: bash
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
-          compression-level: 0 
-          path: |
-            ${{ github.workspace }}/openssl-*.zip
-            ${{ github.workspace }}/openssl-*.tar.gz
-          if-no-files-found: warn
