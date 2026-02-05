@@ -1,0 +1,127 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Build Workflow Run ID (Source of Artifacts)'
+        required: true
+      tag_name:
+        description: 'Tag Name (e.g. v3.3.0-build1)'
+        required: true
+      is_prerelease:
+        description: 'Mark as Pre-release'
+        type: boolean
+        default: true
+      is_draft:
+        description: 'Create as Draft'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release from Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------------
+      # 1. DOWNLOAD ARTIFACTS
+      # ------------------------------------------------------------------------
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: download_staging
+
+      # ------------------------------------------------------------------------
+      # 2. PREPARE ASSETS & EXTRACT VERSION
+      # ------------------------------------------------------------------------
+      - name: Stage Assets & Detect Version
+        run: |
+          mkdir -p assets
+          
+          # Move files to flat assets directory
+          find download_staging -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec mv {} assets/ \;
+          
+          # --- VERSION EXTRACTION LOGIC ---
+          # Pick the first file to parse the version
+          SAMPLE_FILE=$(ls assets | head -n 1)
+          echo "Sampling file: $SAMPLE_FILE"
+          
+          # Regex to extract version from: openssl-<VERSION>-<OS>-<ARCH>...
+          # Matches text between 'openssl-' and the next hyphen
+          if [[ "$SAMPLE_FILE" =~ openssl-([^-]+)- ]]; then
+             DETECTED_VER="${BASH_REMATCH[1]}"
+             echo "Detected OpenSSL Version: $DETECTED_VER"
+             echo "OPENSSL_VERSION=$DETECTED_VER" >> $GITHUB_ENV
+          else
+             echo "::warning::Could not detect version from filename. Using 'Unknown'."
+             echo "OPENSSL_VERSION=Unknown" >> $GITHUB_ENV
+          fi
+          
+          echo "Files to be released:"
+          ls -lh assets/
+
+      # ------------------------------------------------------------------------
+      # 3. CREATE RELEASE
+      # ------------------------------------------------------------------------
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.is_prerelease }}" == "true" ]; then FLAGS="$FLAGS --prerelease"; fi
+          if [ "${{ inputs.is_draft }}" == "true" ]; then FLAGS="$FLAGS --draft"; fi
+          
+          # Use the detected version in the Title
+          TITLE="OpenSSL Distribution ${{ env.OPENSSL_VERSION }}"
+          
+          echo "Creating release '$TITLE' with tag '${{ inputs.tag_name }}'..."
+          
+          gh release create "${{ inputs.tag_name }}" \
+            $FLAGS \
+            --title "$TITLE" \
+            --notes "Automated release of OpenSSL ${{ env.OPENSSL_VERSION }} built from run ${{ inputs.run_id }}."
+
+      # ------------------------------------------------------------------------
+      # 4. UPLOAD AND ANNOTATE
+      # ------------------------------------------------------------------------
+      - name: Upload Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: assets
+        run: |
+          for file in *; do
+            echo "Processing $file..."
+            
+            # Determine Label elements
+            LABEL_OS="Unknown OS"
+            if [[ "$file" == *"Windows"* ]]; then LABEL_OS="Windows"; 
+            elif [[ "$file" == *"Linux"* ]]; then LABEL_OS="Linux"; 
+            elif [[ "$file" == *"macOS"* ]]; then LABEL_OS="macOS"; 
+            elif [[ "$file" == *"Android"* ]]; then LABEL_OS="Android"; 
+            elif [[ "$file" == *"iOS"* ]]; then LABEL_OS="iOS"; fi
+            
+            LABEL_ARCH=""
+            if [[ "$file" == *"x64"* ]]; then LABEL_ARCH="x64"; 
+            elif [[ "$file" == *"x86"* ]]; then LABEL_ARCH="x86"; 
+            elif [[ "$file" == *"arm64"* ]]; then LABEL_ARCH="ARM64"; 
+            elif [[ "$file" == *"arm"* ]]; then LABEL_ARCH="ARM"; fi
+            
+            # Check for Type (Dev vs Runtime)
+            if [[ "$file" == *"-dev."* ]]; then
+               LABEL="$LABEL_OS $LABEL_ARCH SDK (Static Libs, Headers, Debug Symbols)"
+            else
+               LABEL="$LABEL_OS $LABEL_ARCH Runtime (Shared Binaries Only)"
+            fi
+            
+            echo "  > Uploading as: $LABEL"
+            
+            gh release upload "${{ inputs.tag_name }}" "$file" --clobber --label "$LABEL"
+          done
