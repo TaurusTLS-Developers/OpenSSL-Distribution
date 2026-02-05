@@ -322,7 +322,6 @@ jobs:
             # --- UNIX (Linux/macOS/Android) ---
             else
                # A. Copy to Dev (Keep symbols / Original state)
-               # ----------------------------------------------
                find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/dev/bin/ \;
                
                if [ -f "dist/shared/bin/openssl" ]; then
@@ -333,23 +332,19 @@ jobs:
                find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/providers/ \;
                find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/engines/ \;
 
-               # B. Copy Dev to Runtime (Then Strip)
-               # -----------------------------------
+               # B. Copy Dev to Runtime
                cp -r dist/dev/bin/* dist/runtime/
-               # Move providers/engines to root of runtime (Flatten logic)
                if [ -d "dist/runtime/providers" ]; then mv dist/runtime/providers/* dist/runtime/providers/ 2>/dev/null || true; fi
                
                # C. Determine Strip Tool & Flags
-               # -----------------------------------
                STRIP_BIN="strip"
-               STRIP_FLAGS=""
+               STRIP_FLAGS="-s" # Default to aggressive strip (-s) for Linux x64
 
                if [ "${{ matrix.os-label }}" == "Android" ]; then
-                  # Android NDK provides llvm-strip
                   STRIP_BIN="llvm-strip"
                   STRIP_FLAGS="--strip-unneeded"
-               elif [ "${{ runner.os }}" == "Linux" ]; then
-                  # Use cross-compiler prefix (e.g. aarch64-linux-gnu-strip) or default strip
+               elif [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
+                  # Linux ARM64 Cross-Compile
                   STRIP_BIN="${{ matrix.cross_compile_prefix }}strip"
                   STRIP_FLAGS="--strip-unneeded"
                elif [ "${{ runner.os }}" == "macOS" ]; then
@@ -360,18 +355,17 @@ jobs:
                echo "Stripping Runtime binaries using: $STRIP_BIN $STRIP_FLAGS"
 
                # D. Execute Strip on Runtime folder
-               # ----------------------------------
+               # FIX: Ensure files are writable before stripping!
+               chmod -R u+w dist/runtime
+               
                find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -print0 | xargs -0 -I {} $STRIP_BIN $STRIP_FLAGS {}
                
                # E. macOS Dev Debug Symbols (dSYM)
-               # ---------------------------------
                if [ "${{ runner.os }}" == "macOS" ]; then
                   for lib in dist/dev/bin/*.dylib dist/dev/bin/providers/*.dylib dist/dev/bin/engines/*.dylib; do
                      if [ -f "$lib" ] && [ ! -L "$lib" ]; then
                         dsymutil "$lib" -o "$lib.dSYM"
                         mv "$lib.dSYM" dist/dev/debug/
-                        # Optional: Strip Dev binary after extracting dSYM? 
-                        # Standard practice is yes, but if you want full symbols in Dev binary, skip this.
                         strip -x "$lib"
                      fi
                   done
@@ -381,7 +375,6 @@ jobs:
 
           # 5. Cleanup Empty Directories
           find dist -type d -empty -delete
-
       # ------------------------------------------------------------------------
       # PACKAGING
       # ------------------------------------------------------------------------
