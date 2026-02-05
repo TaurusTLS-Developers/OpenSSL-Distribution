@@ -90,7 +90,7 @@ jobs:
             --notes "Automated release of OpenSSL ${{ env.OPENSSL_VERSION }} built from run ${{ inputs.run_id }}."
 
       # ------------------------------------------------------------------------
-      # 4. UPLOAD AND ANNOTATE
+      # 4. UPLOAD ASSETS
       # ------------------------------------------------------------------------
       - name: Upload Assets
         env:
@@ -100,28 +100,17 @@ jobs:
           for file in *; do
             echo "Processing $file..."
             
-            # Determine Label elements
-            LABEL_OS="Unknown OS"
-            if [[ "$file" == *"Windows"* ]]; then LABEL_OS="Windows"; 
-            elif [[ "$file" == *"Linux"* ]]; then LABEL_OS="Linux"; 
-            elif [[ "$file" == *"macOS"* ]]; then LABEL_OS="macOS"; 
-            elif [[ "$file" == *"Android"* ]]; then LABEL_OS="Android"; 
-            elif [[ "$file" == *"iOS"* ]]; then LABEL_OS="iOS"; fi
-            
-            LABEL_ARCH=""
-            if [[ "$file" == *"x64"* ]]; then LABEL_ARCH="x64"; 
-            elif [[ "$file" == *"x86"* ]]; then LABEL_ARCH="x86"; 
-            elif [[ "$file" == *"arm64"* ]]; then LABEL_ARCH="ARM64"; 
-            elif [[ "$file" == *"arm"* ]]; then LABEL_ARCH="ARM"; fi
-            
-            # Check for Type (Dev vs Runtime)
+            # (Optional) Log what we think this file is, just for verification
+            DESC="Unknown"
             if [[ "$file" == *"-dev."* ]]; then
-               LABEL="$LABEL_OS $LABEL_ARCH SDK (Static Libs, Headers, Debug Symbols)"
+               DESC="SDK (Static Libs, Headers, Debug Symbols)"
             else
-               LABEL="$LABEL_OS $LABEL_ARCH Runtime (Shared Binaries Only)"
+               DESC="Runtime (Shared Binaries Only)"
             fi
             
-            echo "  > Uploading as: $LABEL"
+            echo "  > Uploading: $file ($DESC)"
             
-            gh release upload "${{ inputs.tag_name }}" "$file" --clobber --label "$LABEL"
+            # Remove --label flag. 
+            # The filename serves as the description in the Release UI.
+            gh release upload "${{ inputs.tag_name }}" "$file" --clobber
           done
