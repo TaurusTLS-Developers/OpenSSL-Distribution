@@ -246,24 +246,24 @@ jobs:
           make install_sw
           
       # ------------------------------------------------------------------------
-      # REARRANGE & SPLIT (Runtime vs Dev)
+      # REARRANGE ARTIFACTS
       # ------------------------------------------------------------------------
       - name: Rearrange Output
         shell: bash
         run: |
           # 1. Create Staging Areas
-          mkdir -p dist/runtime/bin
+          # Runtime is flat, Dev is structured
+          mkdir -p dist/runtime
           mkdir -p dist/dev/bin
           mkdir -p dist/dev/lib
           mkdir -p dist/dev/include
           mkdir -p dist/dev/doc
-          mkdir -p dist/dev/debug
           
+          # License
           cp src/LICENSE.txt dist/runtime/
           cp src/LICENSE.txt dist/dev/
           
           # 2. Populate Dev Headers & Docs
-          # Use 'cp -L' to dereference symlinks if needed, or -r
           if [ -d "dist/shared/include" ]; then
              cp -r dist/shared/include/* dist/dev/include/
           else
@@ -274,6 +274,7 @@ jobs:
             cp -r dist/shared/html/* dist/dev/doc/
           elif [ -d "dist/shared/share/doc" ]; then
              cp -r dist/shared/share/doc/* dist/dev/doc/
+          # Fallback for static-only builds (try static doc path if exists)
           elif [ -d "dist/static/html" ]; then
              cp -r dist/static/html/* dist/dev/doc/
           elif [ -d "dist/static/share/doc" ]; then
@@ -287,78 +288,95 @@ jobs:
              cp dist/static/lib/*.a dist/dev/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/dev/lib/
           fi
 
-          # 4. Populate Shared Binaries (Runtime + Dev)
+          # 4. Populate Shared Binaries (Runtime vs Dev)
           if [ "${{ matrix.static_only }}" != "true" ]; then
           
             # --- WINDOWS ---
             if [ "${{ runner.os }}" == "Windows" ]; then
-               # DLLs and EXEs to Runtime and Dev
-               cp dist/shared/bin/*.dll dist/runtime/bin/
-               cp dist/shared/bin/*.exe dist/runtime/bin/
+               # Runtime (Flat, No PDBs)
+               cp dist/shared/bin/*.dll dist/runtime/
+               cp dist/shared/bin/*.exe dist/runtime/
+               
+               # Dev (Structured, With PDBs)
                cp dist/shared/bin/*.dll dist/dev/bin/
                cp dist/shared/bin/*.exe dist/dev/bin/
+               cp dist/shared/bin/*.pdb dist/dev/bin/ 2>/dev/null || true
                
-               # PDBs to Dev/Debug only
-               cp dist/shared/bin/*.pdb dist/dev/debug/ 2>/dev/null || true
-               
-               # Providers/Engines Logic (Robust Find)
-               mkdir -p dist/runtime/bin/providers dist/runtime/bin/engines
+               # Providers/Engines Logic
+               # Runtime: Flattened into subfolders
+               mkdir -p dist/runtime/providers dist/runtime/engines
                mkdir -p dist/dev/bin/providers dist/dev/bin/engines
                
-               # Find all DLLs in lib (where OpenSSL puts modules on Win)
+               # Find and sort DLLs
                find dist/shared/lib -name "*.dll" | while read file; do
                    if [[ "$file" == *"ossl-modules"* ]]; then
-                       cp "$file" dist/runtime/bin/providers/
+                       cp "$file" dist/runtime/providers/
                        cp "$file" dist/dev/bin/providers/
+                       # Copy PDB for Dev
+                       pdb="${file%.dll}.pdb"
+                       if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/providers/; fi
                    elif [[ "$file" == *"engines"* ]]; then
-                       cp "$file" dist/runtime/bin/engines/
+                       cp "$file" dist/runtime/engines/
                        cp "$file" dist/dev/bin/engines/
+                       pdb="${file%.dll}.pdb"
+                       if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/engines/; fi
                    fi
                done
 
-               # Find PDBs for modules
-               find dist/shared/lib -name "*.pdb" -exec cp {} dist/dev/debug/ \;
-
             # --- UNIX (Linux/macOS/Android) ---
             else
-               # Shared Objects / Dylibs
-               # Use generic find to locate them wherever they are (lib, lib64)
-               find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -P {} dist/runtime/bin/ \;
-               # Copy same files to Dev
-               cp -P dist/runtime/bin/* dist/dev/bin/
+               # Identify Libs
+               # Note: Use -P to preserve symlinks if possible, but for flat runtime we might want physical copies.
+               # 'cp -L' (dereference) ensures the user gets the actual file, not a broken link if they move it.
+               
+               # Runtime (Copy to root)
+               find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/runtime/ \;
+               
+               # Dev (Copy to bin/)
+               find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/dev/bin/ \;
                
                # Executable
                if [ -f "dist/shared/bin/openssl" ]; then
-                 cp dist/shared/bin/openssl dist/runtime/bin/
+                 cp dist/shared/bin/openssl dist/runtime/
                  cp dist/shared/bin/openssl dist/dev/bin/
                fi
 
                # Providers & Engines
-               mkdir -p dist/runtime/bin/providers dist/runtime/bin/engines
+               mkdir -p dist/runtime/providers dist/runtime/engines
                mkdir -p dist/dev/bin/providers dist/dev/bin/engines
                
-               find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/runtime/bin/providers/ \;
-               find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp {} dist/runtime/bin/engines/ \;
+               find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/runtime/providers/ \;
+               find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/runtime/engines/ \;
                
                # Sync Modules to Dev
-               cp dist/runtime/bin/providers/* dist/dev/bin/providers/ 2>/dev/null || true
-               cp dist/runtime/bin/engines/* dist/dev/bin/engines/ 2>/dev/null || true
+               cp dist/runtime/providers/* dist/dev/bin/providers/ 2>/dev/null || true
+               cp dist/runtime/engines/* dist/dev/bin/engines/ 2>/dev/null || true
 
-               # macOS Symbols
+               # --- STRIPPING & SYMBOLS ---
+               
+               # Runtime: Strip everything
+               if [ "${{ runner.os }}" == "Linux" ] || [ "${{ runner.os }}" == "macOS" ]; then
+                  # Strip libs and exe in runtime
+                  find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec strip -x {} + 2>/dev/null || true
+               fi
+               
+               # macOS Dev: dSYM Bundles
                if [ "${{ runner.os }}" == "macOS" ]; then
+                  # Generate dSYM for Dev binaries
                   for lib in dist/dev/bin/*.dylib dist/dev/bin/providers/*.dylib dist/dev/bin/engines/*.dylib; do
                      if [ -f "$lib" ] && [ ! -L "$lib" ]; then
                         dsymutil "$lib" -o "$lib.dSYM"
-                        mv "$lib.dSYM" dist/dev/debug/
+                        # Strip the binary in Dev ONLY after generating dSYM
                         strip -x "$lib"
-                        # Note: We strip the DEV copy. The Runtime copy should also be stripped ideally.
-                        # Re-copying stripped version to runtime:
-                        cp "$lib" "dist/runtime/${lib#dist/dev/}" 
                      fi
                   done
                fi
+               # Linux/Android Dev: We do nothing. The .so files retain their embedded symbols.
             fi
-          fi # End Shared Check
+          fi
+
+          # 5. Cleanup Empty Directories
+          find dist -type d -empty -delete
 
       # ------------------------------------------------------------------------
       # PACKAGING
