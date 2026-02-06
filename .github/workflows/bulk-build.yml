@@ -1,0 +1,152 @@
+name: Bulk Build Missing Releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry Run (Do not trigger builds, just list)'
+        type: boolean
+        default: false
+
+jobs:
+  analyze-and-trigger:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Version Data
+        id: fetch_data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching Upstream Tags..."
+          # Get all tags matching openssl-3.*
+          gh api "repos/openssl/openssl/tags?per_page=100" --jq '[.[] | select(.name | test("^openssl-3\\."))]' > upstream_tags.json
+          
+          echo "Fetching Local Releases..."
+          # Get all local releases
+          gh release list --limit 100 --json tagName > local_releases.json
+
+      - name: Analyze Versions (Python)
+        id: analyze
+        shell: python
+        run: |
+          import json
+          import sys
+          import os
+          import re
+
+          # 1. Load Data
+          with open('upstream_tags.json') as f:
+              upstream_data = json.load(f)
+          with open('local_releases.json') as f:
+              local_data = json.load(f)
+
+          # 2. Parse Local Versions
+          # Local tags might be 'v3.3.0' or 'openssl-3.3.0'. We normalize to '3.3.0'
+          local_versions = set()
+          for item in local_data:
+              tag = item['tagName']
+              # Strip common prefixes
+              clean = tag.replace('v', '').replace('openssl-', '').split('-')[0]
+              local_versions.add(clean)
+
+          print(f"Local Versions found: {sorted(local_versions)}")
+
+          # 3. Parse & Group Upstream Versions
+          # Structure: { (3, 0): [ (3,0,1), (3,0,2)... ] }
+          minor_groups = {}
+          
+          for item in upstream_data:
+              raw_tag = item['name'] # e.g. openssl-3.0.12
+              
+              # Regex to ensure strict SemVer (ignore alpha/beta for bulk builds?)
+              # Let's assume we only want stable releases: digits only
+              m = re.match(r'^openssl-(\d+)\.(\d+)\.(\d+)$', raw_tag)
+              if m:
+                  major = int(m.group(1))
+                  minor = int(m.group(2))
+                  patch = int(m.group(3))
+                  
+                  key = (major, minor)
+                  if key not in minor_groups:
+                      minor_groups[key] = []
+                  minor_groups[key].append(patch)
+
+          # 4. Determine "Latest per Minor"
+          to_build = []
+          
+          for key, patches in minor_groups.items():
+              max_patch = max(patches)
+              version_str = f"{key[0]}.{key[1]}.{max_patch}"
+              
+              # Check if we have it
+              if version_str not in local_versions:
+                  print(f"Found missing latest minor: {version_str} (Group {key[0]}.{key[1]})")
+                  to_build.append(version_str)
+              else:
+                  print(f"Skipping {version_str} (Already exists)")
+
+          # Sort for clean execution log
+          to_build.sort()
+          
+          # 5. Output to GitHub Env
+          # We join with commas for the next step to loop over
+          build_list_str = ",".join(to_build)
+          print(f"::set-output name=build_list::{build_list_str}")
+          
+          if not to_build:
+              print("No missing versions found.")
+
+      - name: Trigger Builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_LIST: ${{ steps.analyze.outputs.build_list }}
+          IS_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "$BUILD_LIST" ]; then
+            echo "Build list is empty. Exiting."
+            exit 0
+          fi
+          
+          IFS=',' read -r -a VERSIONS <<< "$BUILD_LIST"
+          
+          # Initialize error counter
+          FAIL_COUNT=0
+          
+          for VER in "${VERSIONS[@]}"; do
+            echo "---------------------------------------------------"
+            echo "Processing Version: $VER"
+            
+            if [ "$IS_DRY_RUN" == "true" ]; then
+               echo "[DRY RUN] Would trigger 'build-openssl.yml' for version=$VER"
+            else
+               echo "Triggering 'Build OpenSSL 3.x'..."
+               
+               # Try to trigger. If it fails, log it and increment counter, but CONTINUE the loop.
+               if gh workflow run build-openssl.yml -f version="$VER"; then
+                  echo "✅ Triggered successfully. Added to Queue."
+               else
+                  echo "::error::❌ Failed to trigger build for $VER. Check API limits or workflow inputs."
+                  FAIL_COUNT=$((FAIL_COUNT+1))
+               fi
+               
+               # Small pause to be kind to the GitHub API
+               sleep 5
+            fi
+          done
+
+          echo "---------------------------------------------------"
+          echo "Batch processing complete."
+          
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+             echo "::warning::Finished with $FAIL_COUNT trigger failures."
+             # Optional: exit 1 here if you want the Bulk job to show Red status
+          else
+             echo "All triggers successful."
+          fi

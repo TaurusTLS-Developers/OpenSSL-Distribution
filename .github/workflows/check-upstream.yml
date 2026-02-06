@@ -1,0 +1,59 @@
+name: Check Upstream OpenSSL
+
+on:
+  schedule:
+    # Run every day at 00:00 UTC
+    - cron: '30 1 * * *'
+  workflow_dispatch: # Allow manual testing
+
+jobs:
+  check-and-trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Check for New OpenSSL Release
+        id: check_version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching latest OpenSSL 3.x release..."
+          
+          # 1. Get the latest release from the official repo
+          # We use jq to filter for tag names starting with 'openssl-3.'
+          LATEST_UPSTREAM=$(gh api repos/openssl/openssl/releases --jq 'map(select(.tag_name | startswith("openssl-3."))) | .[0].tag_name')
+          
+          if [ -z "$LATEST_UPSTREAM" ] || [ "$LATEST_UPSTREAM" == "null" ]; then
+            echo "::error::Could not fetch upstream version."
+            exit 1
+          fi
+          
+          # Extract just the version number (e.g., 'openssl-3.3.0' -> '3.3.0')
+          CLEAN_VERSION=${LATEST_UPSTREAM#openssl-}
+          echo "Latest Upstream Version: $CLEAN_VERSION"
+          
+          # 2. Check if we already have a release for this version in OUR repo
+          # We search our releases for a tag containing this version number
+          LOCAL_MATCH=$(gh release list --limit 50 | grep "$CLEAN_VERSION" || true)
+          
+          if [ -n "$LOCAL_MATCH" ]; then
+            echo "We already have a release for $CLEAN_VERSION. Nothing to do."
+            echo "trigger_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version detected ($CLEAN_VERSION)! Preparing to trigger build."
+            echo "trigger_build=true" >> $GITHUB_OUTPUT
+            echo "new_version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger Build Workflow
+        if: steps.check_version.outputs.trigger_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Triggering 'Build OpenSSL 3.x' workflow for version ${{ steps.check_version.outputs.new_version }}..."
+          
+          # Trigger the workflow by its filename, passing the version input
+          gh workflow run build-openssl.yml -f version="${{ steps.check_version.outputs.new_version }}"
+          
+          echo "Build triggered successfully."
