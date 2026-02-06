@@ -21,6 +21,9 @@ on:
     workflows: ["Build OpenSSL 3.x"]
     types:
       - completed
+    branches:
+      - main
+      - workflows_dev
 
 permissions:
   contents: write
