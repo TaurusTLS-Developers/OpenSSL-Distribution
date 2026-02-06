@@ -8,6 +8,10 @@ on:
         required: true
         default: '3.3.0'
 
+concurrency: 
+  group: openssl-build-queue
+  cancel-in-progress: false
+
 jobs:
   build:
     name: ${{ matrix.os-label }} - ${{ matrix.arch }}
