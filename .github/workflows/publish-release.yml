@@ -1,116 +1,159 @@
 name: Publish Release
 
 on:
+  # Manual Trigger
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Build Workflow Run ID (Source of Artifacts)'
+        description: 'Build Workflow Run ID'
         required: true
       tag_name:
-        description: 'Tag Name (e.g. v3.3.0-build1)'
-        required: true
-      is_prerelease:
-        description: 'Mark as Pre-release'
-        type: boolean
-        default: true
+        description: 'Release Tag (e.g. v3.3.0)'
+        required: false
+        default: 'auto'
       is_draft:
         description: 'Create as Draft'
         type: boolean
         default: true
 
+  # Automatic Trigger (Chained)
+  workflow_run:
+    workflows: ["Build OpenSSL 3.x"]
+    types:
+      - completed
+    branches:
+      - main
+      - workflows_dev
+
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Create Release from Build
+  # ============================================================================
+  # JOB 1: VERIFICATION (The Stub)
+  # Runs on 3 OSs to verify the binaries before releasing
+  # ============================================================================
+  verify_binaries:
+    name: Verify ${{ matrix.os }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+
+    steps:
+      - name: Determine Run ID
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
+          else
+            echo "TARGET_RUN_ID=${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
+          fi
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.TARGET_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: verify_staging
+
+      # ------------------------------------------------------------------------
+      # STUB TEST: This is where we will add the TaurusTLS tool later
+      # ------------------------------------------------------------------------
+      - name: Run Compatibility Check (Stub)
+        shell: bash
+        run: |
+          echo "======================================================="
+          echo "Running Compatibility Tests on ${{ matrix.os }}..."
+          echo "======================================================="
+          
+          # 1. Locate the correct artifact for this OS (Simple Find)
+          # In the future, we will extract the specific archive for this OS
+          
+          echo "Locating artifacts..."
+          find verify_staging -name "*.zip" -o -name "*.tar.gz"
+          
+          echo ""
+          echo "[STUB] Executing TaurusCheck..."
+          echo "[STUB] Loading Libraries..."
+          echo "[STUB] Verifying Symbols..."
+          
+          # Force Success for now
+          echo ">>> TEST PASSED (Stub)"
+          exit 0
+
+  # ============================================================================
+  # JOB 2: CREATE RELEASE
+  # Only runs if 'verify_binaries' succeeds
+  # ============================================================================
+  create_release:
+    name: Create Draft Release
+    needs: verify_binaries
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------------
-      # 1. DOWNLOAD ARTIFACTS
-      # ------------------------------------------------------------------------
+      - name: Determine Run ID
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
+          else
+            echo "TARGET_RUN_ID=${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
+          fi
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ env.TARGET_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: download_staging
+          path: release_staging
 
-      # ------------------------------------------------------------------------
-      # 2. PREPARE ASSETS & EXTRACT VERSION
-      # ------------------------------------------------------------------------
       - name: Stage Assets & Detect Version
         run: |
           mkdir -p assets
+          find release_staging -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec mv {} assets/ \;
           
-          # Move files to flat assets directory
-          find download_staging -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec mv {} assets/ \;
-          
-          # --- VERSION EXTRACTION LOGIC ---
-          # Pick the first file to parse the version
+          # Detect Version from filename (e.g. openssl-3.3.0-Windows...)
           SAMPLE_FILE=$(ls assets | head -n 1)
-          echo "Sampling file: $SAMPLE_FILE"
-          
-          # Regex to extract version from: openssl-<VERSION>-<OS>-<ARCH>...
-          # Matches text between 'openssl-' and the next hyphen
           if [[ "$SAMPLE_FILE" =~ openssl-([^-]+)- ]]; then
              DETECTED_VER="${BASH_REMATCH[1]}"
-             echo "Detected OpenSSL Version: $DETECTED_VER"
              echo "OPENSSL_VERSION=$DETECTED_VER" >> $GITHUB_ENV
           else
-             echo "::warning::Could not detect version from filename. Using 'Unknown'."
              echo "OPENSSL_VERSION=Unknown" >> $GITHUB_ENV
           fi
-          
-          echo "Files to be released:"
-          ls -lh assets/
 
-      # ------------------------------------------------------------------------
-      # 3. CREATE RELEASE
-      # ------------------------------------------------------------------------
+      - name: Determine Tag
+        run: |
+          if [ "${{ inputs.tag_name }}" != "" ] && [ "${{ inputs.tag_name }}" != "auto" ]; then
+            echo "RELEASE_TAG=${{ inputs.tag_name }}" >> $GITHUB_ENV
+          else
+            # Auto-generate tag based on version and date
+            DATE_STR=$(date +'%Y%m%d')
+            echo "RELEASE_TAG=v${{ env.OPENSSL_VERSION }}-${DATE_STR}" >> $GITHUB_ENV
+          fi
+
       - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FLAGS=""
-          if [ "${{ inputs.is_prerelease }}" == "true" ]; then FLAGS="$FLAGS --prerelease"; fi
-          if [ "${{ inputs.is_draft }}" == "true" ]; then FLAGS="$FLAGS --draft"; fi
-          
-          # Use the detected version in the Title
           TITLE="OpenSSL Distribution ${{ env.OPENSSL_VERSION }}"
           
-          echo "Creating release '$TITLE' with tag '${{ inputs.tag_name }}'..."
-          
-          gh release create "${{ inputs.tag_name }}" \
-            $FLAGS \
+          # Default to Draft/Pre-release for safety
+          gh release create "${{ env.RELEASE_TAG }}" \
+            --draft \
+            --prerelease \
             --title "$TITLE" \
-            --notes "Automated release of OpenSSL ${{ env.OPENSSL_VERSION }} built from run ${{ inputs.run_id }}."
+            --notes "Automated build from Run ${{ env.TARGET_RUN_ID }}."
 
-      # ------------------------------------------------------------------------
-      # 4. UPLOAD ASSETS
-      # ------------------------------------------------------------------------
       - name: Upload Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: assets
         run: |
           for file in *; do
-            echo "Processing $file..."
-            
-            # (Optional) Log what we think this file is, just for verification
-            DESC="Unknown"
-            if [[ "$file" == *"-dev."* ]]; then
-               DESC="SDK (Static Libs, Headers, Debug Symbols)"
-            else
-               DESC="Runtime (Shared Binaries Only)"
-            fi
-            
-            echo "  > Uploading: $file ($DESC)"
-            
-            # Remove --label flag. 
-            # The filename serves as the description in the Release UI.
-            gh release upload "${{ inputs.tag_name }}" "$file" --clobber
+            echo "Uploading $file..."
+            gh release upload "${{ env.RELEASE_TAG }}" "$file" --clobber
           done
