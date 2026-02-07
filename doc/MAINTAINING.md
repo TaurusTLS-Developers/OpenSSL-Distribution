@@ -27,13 +27,13 @@ The pipeline consists of three workflows:
 ### How to build a specific version manually
 1.  Go to **Actions** tab -> **Build OpenSSL 3.x**.
 2.  Click **Run workflow**.
-3.  Enter the version (e.g., `3.2.0`).
+3.  Enter the version (e.g., `3.3.0`).
 4.  The pipeline will build and create a Draft Release automatically.
 
 ### How to backfill multiple missing versions
 1.  Go to **Actions** tab -> **Bulk Build Missing Releases**.
 2.  Click **Run workflow**.
-3.  This script compares local releases against upstream and triggers builds for the latest patch of every minor version (e.g., 3.0.x, 3.1.x) that is missing.
+3.  This script compares local releases against upstream and triggers builds for the latest patch of every minor version (e.g., 3.0.x, 3.3.x) that is missing.
 
 ### Secrets Configuration
 To allow the workflows to trigger each other, a **Personal Access Token (PAT)** is required.
