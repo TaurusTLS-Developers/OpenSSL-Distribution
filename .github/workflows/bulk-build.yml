@@ -7,6 +7,11 @@ on:
         description: 'Dry Run (Do not trigger builds, just list)'
         type: boolean
         default: false
+      
+      force_build:
+        description: 'Force Rebuild (Ignore existing releases)'
+        type: boolean
+        default: false        
 
 jobs:
   analyze-and-trigger:
@@ -35,11 +40,17 @@ jobs:
       - name: Analyze Versions (Python)
         id: analyze
         shell: python
+        env:
+          # Pass the input to Python
+          FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           import json
           import sys
           import os
           import re
+
+          # Get Flag
+          force_build = os.environ.get('FORCE_BUILD') == 'true'
 
           # 1. Load Data
           with open('upstream_tags.json') as f:
@@ -48,25 +59,19 @@ jobs:
               local_data = json.load(f)
 
           # 2. Parse Local Versions
-          # Local tags might be 'v3.3.0' or 'openssl-3.3.0'. We normalize to '3.3.0'
           local_versions = set()
           for item in local_data:
               tag = item['tagName']
-              # Strip common prefixes
               clean = tag.replace('v', '').replace('openssl-', '').split('-')[0]
               local_versions.add(clean)
 
           print(f"Local Versions found: {sorted(local_versions)}")
 
           # 3. Parse & Group Upstream Versions
-          # Structure: { (3, 0): [ (3,0,1), (3,0,2)... ] }
           minor_groups = {}
           
           for item in upstream_data:
-              raw_tag = item['name'] # e.g. openssl-3.0.12
-              
-              # Regex to ensure strict SemVer (ignore alpha/beta for bulk builds?)
-              # Let's assume we only want stable releases: digits only
+              raw_tag = item['name']
               m = re.match(r'^openssl-(\d+)\.(\d+)\.(\d+)$', raw_tag)
               if m:
                   major = int(m.group(1))
@@ -85,27 +90,30 @@ jobs:
               max_patch = max(patches)
               version_str = f"{key[0]}.{key[1]}.{max_patch}"
               
-              # Check if we have it
+              # --- MODIFIED LOGIC ---
               if version_str not in local_versions:
-                  print(f"Found missing latest minor: {version_str} (Group {key[0]}.{key[1]})")
+                  print(f"Found missing latest minor: {version_str}")
+                  to_build.append(version_str)
+              elif force_build:
+                  print(f"Force Rebuild selected: {version_str} (Exists, but rebuilding)")
                   to_build.append(version_str)
               else:
                   print(f"Skipping {version_str} (Already exists)")
+              # ----------------------
 
-          # Sort for clean execution log
           to_build.sort()
           
           # 5. Output to GitHub Env
           build_list_str = ",".join(to_build)
           
-          # New GITHUB_OUTPUT syntax
           if "GITHUB_OUTPUT" in os.environ:
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   print(f"build_list={build_list_str}", file=f)
           else:
-              # Fallback for local testing
               print(f"build_list={build_list_str}")
-              
+          
+          if not to_build:
+              print("No versions selected for build.")              
 
       - name: Trigger Builds
         env:
@@ -133,7 +141,7 @@ jobs:
                echo "Triggering 'Build OpenSSL 3.x'..."
                
                # Try to trigger. If it fails, log it and increment counter, but CONTINUE the loop.
-               if gh workflow run build-openssl.yml -f version="$VER"; then
+               if gh workflow run build-openssl.yml --ref "$CURRENT_REF" -f version="$VER"; then
                   echo "✅ Triggered successfully. Added to Queue."
                else
                   echo "::error::❌ Failed to trigger build for $VER. Check API limits or workflow inputs."
