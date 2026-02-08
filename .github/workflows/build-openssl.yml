@@ -39,13 +39,13 @@ jobs:
             os-runner: ubuntu-latest
             arch: x64
             target: linux-x86_64
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential libtext-template-perl libsctp-dev
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: arm64
             target: linux-aarch64
             cross_compile_prefix: aarch64-linux-gnu-
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu libtext-template-perl libsctp-dev
 
           # --- DESKTOP MACOS ---
           - os-label: macOS
@@ -149,7 +149,7 @@ jobs:
           # Linux Specifics: Use $ORIGIN for relative loading
           LDFLAGS=""
           if [ "${{ runner.os }}" == "Linux" ]; then
-             LDFLAGS="-Wl,-rpath,\$$ORIGIN"
+             LDFLAGS="enable-sctp -Wl,-rpath,\$$ORIGIN"
           fi
           
           if [ "${{ runner.os }}" == "macOS" ]; then
