@@ -127,16 +127,6 @@ jobs:
 
       - name: Determine Tag
         run: |
-          if [ "${{ inputs.tag_name }}" != "" ] && [ "${{ inputs.tag_name }}" != "auto" ]; then
-            echo "RELEASE_TAG=${{ inputs.tag_name }}" >> $GITHUB_ENV
-          else
-            # Auto-generate tag based on version and date
-            DATE_STR=$(date +'%Y%m%d')
-            echo "RELEASE_TAG=v${{ env.OPENSSL_VERSION }}-${DATE_STR}" >> $GITHUB_ENV
-          fi
-
-      - name: Determine Tag
-        run: |
           # Check if user provided a specific tag in manual dispatch
           if [ "${{ inputs.tag_name }}" != "" ] && [ "${{ inputs.tag_name }}" != "auto" ]; then
             echo "RELEASE_TAG=${{ inputs.tag_name }}" >> $GITHUB_ENV
@@ -146,20 +136,36 @@ jobs:
             echo "RELEASE_TAG=v.${{ env.OPENSSL_VERSION }}" >> $GITHUB_ENV
           fi
 
-      - name: Create Release
+      - name: Create or Update Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TITLE="OpenSSL Distribution ${{ env.OPENSSL_VERSION }}"
+          TAG="${{ env.RELEASE_TAG }}"
           
-          # Create Draft Release
-          # Note: GitHub automatically attaches the repo source code to this tag.
-          # We cannot disable that, but we won't upload any other source artifacts.
-          gh release create "${{ env.RELEASE_TAG }}" \
-            --draft \
-            --prerelease \
-            --title "$TITLE" \
-            --notes "Automated build from Run ${{ env.TARGET_RUN_ID }}."
+          echo "Target Tag: $TAG"
+          
+          # 1. Check if release exists
+          if gh release view "$TAG" > /dev/null 2>&1; then
+             echo "✅ Release '$TAG' already exists. Switching to Update mode."
+             
+             # Optional: Update the notes/title to reflect the new build ID
+             # We assume we want to keep it as Draft/Prerelease if it was one, 
+             # or just update metadata.
+             gh release edit "$TAG" \
+               --title "$TITLE" \
+               --notes "Automated build from Run ${{ env.TARGET_RUN_ID }} (Updated)." \
+               --draft \
+               --prerelease
+          else
+             echo "🆕 Release '$TAG' does not exist. Creating..."
+             
+             gh release create "$TAG" \
+               --draft \
+               --prerelease \
+               --title "$TITLE" \
+               --notes "Automated build from Run ${{ env.TARGET_RUN_ID }}."
+          fi
 
       - name: Upload Assets
         env:
