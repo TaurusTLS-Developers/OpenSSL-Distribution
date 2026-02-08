@@ -134,7 +134,7 @@ jobs:
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Shared (Unix/Android)
         if: runner.os != 'Windows' && matrix.static_only != true
@@ -225,7 +225,7 @@ jobs:
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
