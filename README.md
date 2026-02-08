@@ -35,7 +35,7 @@ Contains everything required to **compile** or debug applications against OpenSS
 
 | Platform | Architecture | Linkage | Notes |
 | :--- | :--- | :--- | :--- |
-| **Windows** | x86, x64, ARM64 | Static CRT (`/MT`) | Standalone (No VC++ Redistributable needed). |
+| **Windows** | x86, x64, ARM64 | Shared & Static | Built for `Windows 10`/`Windows Server 2016` and higher.<br/>Standalone (No VC++ Redistributable needed). |
 | **Linux** | x64, ARM64 | Shared & Static | Built on Ubuntu, compatible with glibc distros. |
 | **macOS** | x64 (Intel), ARM64 | Shared & Static | Universal support for modern macOS. |
 | **Android** | ARM, ARM64, x86, x64 | Shared & Static | Built against recent NDK. |
