@@ -23,7 +23,7 @@ on:
       - completed
     branches:
       - main
-      - workflows_dev
+      - workflow_dev
 
 permissions:
   contents: write

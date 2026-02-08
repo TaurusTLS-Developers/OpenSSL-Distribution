@@ -39,13 +39,13 @@ jobs:
             os-runner: ubuntu-latest
             arch: x64
             target: linux-x86_64
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential libtext-template-perl libsctp-dev
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: arm64
             target: linux-aarch64
             cross_compile_prefix: aarch64-linux-gnu-
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu libtext-template-perl libsctp-dev
 
           # --- DESKTOP MACOS ---
           - os-label: macOS
@@ -134,7 +134,7 @@ jobs:
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Shared (Unix/Android)
         if: runner.os != 'Windows' && matrix.static_only != true
@@ -146,22 +146,28 @@ jobs:
           OPENSSLDIR="/usr/lib/ssl"
           PREFIX="/usr/local"
           
-          # Linux Specifics: Use $ORIGIN for relative loading
-          LDFLAGS=""
-          if [ "${{ runner.os }}" == "Linux" ]; then
-             LDFLAGS="-Wl,-rpath,\$$ORIGIN"
-          fi
-          
           if [ "${{ runner.os }}" == "macOS" ]; then
              OPENSSLDIR="/private/etc/ssl"
           fi
           
-          # 2. Configure
+          # 2. Define Platform Flags
+          EXTRA_OPTS=""
+
+          # Desktop Linux: Enable SCTP + RPATH
+          if [ "${{ matrix.os-label }}" == "Linux" ]; then
+             EXTRA_OPTS="enable-sctp -Wl,-rpath,\$$ORIGIN"
+          
+          # Android: RPATH only (No SCTP)
+          elif [ "${{ matrix.os-label }}" == "Android" ]; then
+             EXTRA_OPTS="-Wl,-rpath,\$$ORIGIN"
+          fi
+          
+          # 3. Configure
           ./Configure ${{ matrix.target }} \
             --prefix=$PREFIX \
             --openssldir=$OPENSSLDIR \
             shared no-tests \
-            $LDFLAGS
+            $EXTRA_OPTS
                 
       - name: Build Shared (Windows)
         if: runner.os == 'Windows' && matrix.static_only != true
@@ -225,7 +231,7 @@ jobs:
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
@@ -241,24 +247,53 @@ jobs:
              OPENSSLDIR="/private/etc/ssl"
           fi
 
-          # 2. iOS Specifics
-          EXTRA_FLAGS=""
+          # 2. Platform Flags
+          EXTRA_OPTS=""
+
+          # Desktop Linux: Enable SCTP
+          if [ "${{ matrix.os-label }}" == "Linux" ]; then
+             EXTRA_OPTS="enable-sctp"
+          fi
+
+          # iOS Specifics
           if [ "${{ matrix.target }}" == "ios64-cross" ]; then
              SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
              export CC=clang
-             # Construct the CFLAGS argument
-             EXTRA_FLAGS="CFLAGS=-isysroot ${SDK_PATH} -arch arm64"
+             # Pass via CFLAGS string, not direct arg
+             EXTRA_OPTS="$EXTRA_OPTS -isysroot ${SDK_PATH} -arch arm64"
              unset CROSS_TOP
              unset CROSS_SDK
           fi
 
           # 3. Configure
-          # Fix: Use ${VAR:+"$VAR"} to avoid passing an empty string argument
-          ./Configure ${{ matrix.target }} \
-             --prefix=$PREFIX \
-             --openssldir=$OPENSSLDIR \
-             no-shared no-tests \
-             ${EXTRA_FLAGS:+"$EXTRA_FLAGS"}
+          # Note: We pass EXTRA_OPTS inside CFLAGS for iOS if needed, 
+          # but for SCTP 'enable-sctp' is a direct Configure argument.
+          # The logic below handles both cases by checking what EXTRA_OPTS contains.
+          
+          # If it contains -isysroot, pass it as CFLAGS.
+          # If it contains enable-sctp, pass it as args.
+          # To keep it simple, we split them:
+          
+          CONF_ARGS="no-shared no-tests"
+          
+          if [[ "$EXTRA_OPTS" == *"enable-sctp"* ]]; then
+             CONF_ARGS="$CONF_ARGS enable-sctp"
+          fi
+          
+          if [[ "$EXTRA_OPTS" == *"-isysroot"* ]]; then
+             # iOS case: Pass as CFLAGS
+             ./Configure ${{ matrix.target }} \
+                --prefix=$PREFIX \
+                --openssldir=$OPENSSLDIR \
+                $CONF_ARGS \
+                "CFLAGS=$EXTRA_OPTS"
+          else
+             # Standard case
+             ./Configure ${{ matrix.target }} \
+                --prefix=$PREFIX \
+                --openssldir=$OPENSSLDIR \
+                $CONF_ARGS
+          fi
 
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
