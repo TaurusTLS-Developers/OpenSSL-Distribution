@@ -298,11 +298,63 @@ jobs:
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
         working-directory: src
-        shell: cmd
+        shell: pwsh
         run: |
-          ${{ matrix.setup_cmd }}
-          nmake
-          nmake install
+          # 1. Setup Environment
+          cmd /c "${{ matrix.setup_cmd }} && nmake && nmake install"
+          
+          # 2. Preparation
+          $distRoot = "../dist/static"
+          $libDir = "$distRoot/lib"
+          $objDir = "$libDir/objs"
+          New-Item -ItemType Directory -Force -Path $objDir | Out-Null
+          
+          # 3. Helper Function to Process a Library
+          function Generate-Link-Inc($LibName) {
+              $libPath = "$libDir\$LibName.lib"
+              $incPath = "$libDir\$LibName.inc"
+              
+              Write-Host "Processing $LibName..."
+              
+              # Get list of objects inside the .lib using MSVC lib.exe
+              # We use cmd /c to ensure we use the VS environment variables if needed, 
+              # though they should be inherited by pwsh in this context.
+              # Note: We need the setup_cmd context for lib.exe
+              $cmdOutput = cmd /c "${{ matrix.setup_cmd }} && lib.exe /NOLOGO /LIST $libPath"
+              
+              $sb = new-object System.Text.StringBuilder
+              $sb.AppendLine("{$IFDEF MSWINDOWS}") | Out-Null
+              
+              # Iterate output lines
+              $count = 0
+              foreach ($line in $cmdOutput) {
+                  $cleanLine = $line.Trim()
+                  if ([string]::IsNullOrWhiteSpace($cleanLine)) { continue }
+                  
+                  # The line is a relative path to the obj (e.g. crypto\bio\bio_lib.obj)
+                  if (Test-Path $cleanLine) {
+                      $fileName = [System.IO.Path]::GetFileName($cleanLine)
+                      
+                      # Copy the object file to the flat distribution folder
+                      # Use Copy-Item -Force to handle potential duplicates (rare in OSSL3)
+                      Copy-Item -Path $cleanLine -Destination "$objDir\$fileName" -Force
+                      
+                      # Add directive to StringBuilder
+                      # Path is relative to the .inc file location
+                      $sb.AppendLine("  {`$LINK 'objs\$fileName'}") | Out-Null
+                      $count++
+                  }
+              }
+              $sb.AppendLine("{$ENDIF}") | Out-Null
+              
+              # Write .inc file
+              [System.IO.File]::WriteAllText($incPath, $sb.ToString())
+              Write-Host "  Extracted $count objects to $incPath"
+          }
+
+          # 4. Execute
+          Generate-Link-Inc "libcrypto"
+          Generate-Link-Inc "libssl"
 
       - name: Build Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
