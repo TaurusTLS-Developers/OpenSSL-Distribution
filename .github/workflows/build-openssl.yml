@@ -147,8 +147,8 @@ jobs:
           ${{ matrix.setup_cmd }}
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests ^
             "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" ^
-            "LDFLAGS=ARM64EC_LFLAGS=/MACHINE:ARM64EC /DEBUG" ^
-             "ARFLAGS=ARM64EC_ARFLAGS=/MACHINE:ARM64EC"
+            "LDFLAGS=/MACHINE:ARM64EC /DEBUG" ^
+            "ARFLAGS=/MACHINE:ARM64EC"
 
       - name: Configure Shared (Unix/Android)
         if: runner.os != 'Windows' && matrix.static_only != true
