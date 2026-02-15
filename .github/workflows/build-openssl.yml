@@ -22,19 +22,19 @@ jobs:
             os-runner: windows-latest
             arch: x64
             target: VC-WIN64A
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_x86 
 
-            - os-label: Windows
+          - os-label: Windows
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
 
-            - os-label: Windows
+          - os-label: Windows
             os-runner: windows-latest
-            arch: arm64
+            arch: arm64ec
             target: VC-WIN64-ARM
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
 
 #          # --- DESKTOP LINUX ---
 #          - os-label: Linux
@@ -131,14 +131,25 @@ jobs:
       # BUILD SHARED (Skip for iOS/StaticOnly)
       # ------------------------------------------------------------------------
       
-      - name: Configure Shared (Windows)
-        if: runner.os == 'Windows' && matrix.static_only != true
+      - name: Configure Shared (Windows x86/x64)
+        if: runner.os == 'Windows' && matrix.arch != 'arm64ec' && matrix.static_only != true
         working-directory: src
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
       
+      - name: Configure Shared (Windows x86/x64)
+        if: runner.os == 'Windows' && matrix.arch == 'arm64ec' && matrix.static_only != true
+        working-directory: src
+        shell: cmd
+        run: |
+          ${{ matrix.setup_cmd }}
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests ^
+            "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" ^
+            "LDFLAGS=ARM64EC_LFLAGS=/MACHINE:ARM64EC /DEBUG" ^
+             "ARFLAGS=ARM64EC_ARFLAGS=/MACHINE:ARM64EC"
+
       - name: Configure Shared (Unix/Android)
         if: runner.os != 'Windows' && matrix.static_only != true
         working-directory: src
@@ -228,13 +239,21 @@ jobs:
           CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
         run: make clean
 
-      - name: Configure Static (Windows)
-        if: runner.os == 'Windows'
+      - name: Configure Static (Windows x86/x64)
+        if: runner.os == 'Windows' && matrix.arch != 'arm64ec'
         working-directory: src
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /MT /D_WIN32_WINNT=0x0A00"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+      
+      - name: Configure Static (Windows x86/x64)
+        if: runner.os == 'Windows' && matrix.arch == 'arm64ec'
+        working-directory: src
+        shell: cmd
+        run: |
+          ${{ matrix.setup_cmd }}
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O1 /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
