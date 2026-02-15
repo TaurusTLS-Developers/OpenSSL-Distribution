@@ -31,7 +31,7 @@ jobs:
             setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86
 
           - os-label: Windows
-            os-runner: windows-latest
+            os-runner: windows-11-arm
             arch: arm64ec
             target: VC-WIN64-ARM
             setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
