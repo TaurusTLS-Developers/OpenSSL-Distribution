@@ -28,7 +28,7 @@ jobs:
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_86
+            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86
 
           - os-label: Windows
             os-runner: windows-latest
