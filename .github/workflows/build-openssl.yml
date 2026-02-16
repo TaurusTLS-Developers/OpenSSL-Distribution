@@ -36,65 +36,65 @@ jobs:
             target: VC-WIN64-ARM
             setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
 
-#          # --- DESKTOP LINUX ---
-#          - os-label: Linux
-#            os-runner: ubuntu-latest
-#            arch: x64
-#            target: linux-x86_64
-#            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential libtext-template-perl libsctp-dev
-#          - os-label: Linux
-#            os-runner: ubuntu-latest
-#            arch: arm64
-#            target: linux-aarch64
-#            cross_compile_prefix: aarch64-linux-gnu-
-#            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu libtext-template-perl libsctp-dev
-#
-#          # --- DESKTOP MACOS ---
-#          - os-label: macOS
-#            os-runner: macos-14
-#            arch: x64
-#            target: darwin64-x86_64-cc
-#            setup_cmd: echo "Setup Mac Intel"
-#          - os-label: macOS
-#            os-runner: macos-14
-#            arch: arm64
-#            target: darwin64-arm64-cc
-#            setup_cmd: echo "Setup Mac ARM"
+          # --- DESKTOP LINUX ---
+          - os-label: Linux
+            os-runner: ubuntu-latest
+            arch: x64
+            target: linux-x86_64
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential libtext-template-perl libsctp-dev
+          - os-label: Linux
+            os-runner: ubuntu-latest
+            arch: arm64
+            target: linux-aarch64
+            cross_compile_prefix: aarch64-linux-gnu-
+            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu libtext-template-perl libsctp-dev
 
-#          # --- ANDROID (Linux Host) ---
-#          - os-label: Android
-#            os-runner: ubuntu-latest
-#            arch: arm64
-#            target: android-arm64
-#            ndk_ver: 26.1.10909125
-#          - os-label: Android
-#            os-runner: ubuntu-latest
-#            arch: arm
-#            target: android-arm
-#            ndk_ver: 26.1.10909125
-#          - os-label: Android
-#            os-runner: ubuntu-latest
-#            arch: x86
-#            target: android-x86
-#            ndk_ver: 26.1.10909125
-#          - os-label: Android
-#            os-runner: ubuntu-latest
-#            arch: x64
-#            target: android-x86_64
-#            ndk_ver: 26.1.10909125
+          # --- DESKTOP MACOS ---
+          - os-label: macOS
+            os-runner: macos-14
+            arch: x64
+            target: darwin64-x86_64-cc
+            setup_cmd: echo "Setup Mac Intel"
+          - os-label: macOS
+            os-runner: macos-14
+            arch: arm64
+            target: darwin64-arm64-cc
+            setup_cmd: echo "Setup Mac ARM"
 
-#          # --- IOS (macOS Host) ---
-#          # Static Only
-#          - os-label: iOS
-#            os-runner: macos-14
-#            arch: arm64
-#            target: ios64-cross
-#            static_only: true
-#          - os-label: iOS_Sim
-#            os-runner: macos-14
-#            arch: x64
-#            target: iossimulator-xcrun
-#            static_only: true
+          # --- ANDROID (Linux Host) ---
+          - os-label: Android
+            os-runner: ubuntu-latest
+            arch: arm64
+            target: android-arm64
+            ndk_ver: 26.1.10909125
+          - os-label: Android
+            os-runner: ubuntu-latest
+            arch: arm
+            target: android-arm
+            ndk_ver: 26.1.10909125
+          - os-label: Android
+            os-runner: ubuntu-latest
+            arch: x86
+            target: android-x86
+            ndk_ver: 26.1.10909125
+          - os-label: Android
+            os-runner: ubuntu-latest
+            arch: x64
+            target: android-x86_64
+            ndk_ver: 26.1.10909125
+
+          # --- IOS (macOS Host) ---
+          # Static Only
+          - os-label: iOS
+            os-runner: macos-14
+            arch: arm64
+            target: ios64-cross
+            static_only: true
+          - os-label: iOS_Sim
+            os-runner: macos-14
+            arch: x64
+            target: iossimulator-xcrun
+            static_only: true
 
     steps:
       - name: Checkout Builder Repo
