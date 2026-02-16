@@ -407,6 +407,9 @@ jobs:
           mkdir -p dist/runtime
           mkdir -p dist/dev/bin
           mkdir -p dist/dev/lib
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            mkdir -p dist/dev/objs
+          fi
           mkdir -p dist/dev/include
           mkdir -p dist/dev/doc
           mkdir -p dist/dev/debug
@@ -434,6 +437,8 @@ jobs:
           # 3. Populate Static Libs (Dev Only)
           if [ "${{ runner.os }}" == "Windows" ]; then
              cp dist/static/lib/*.lib dist/dev/lib/
+             cp dist/static/objs/*.inc /dist/dev/objs/
+             cp dist/static/objs/*.obj /dist/dev/objs/
           else
              cp dist/static/lib/*.a dist/dev/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/dev/lib/
           fi
