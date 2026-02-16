@@ -131,15 +131,15 @@ jobs:
       # BUILD SHARED (Skip for iOS/StaticOnly)
       # ------------------------------------------------------------------------
       
-      - name: Configure Shared (Windows x86/x64)
-        if: runner.os == 'Windows' && matrix.arch != 'arm64ec' && matrix.static_only != true
-        working-directory: src
-        shell: cmd
-        run: |
-          ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+#      - name: Configure Shared (Windows x86/x64)
+#        if: runner.os == 'Windows' && matrix.arch != 'arm64ec' && matrix.static_only != true
+#        working-directory: src
+#        shell: cmd
+#        run: |
+#          ${{ matrix.setup_cmd }}
+#          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
       
-      - name: Configure Shared (Windows x86/x64)
+      - name: Configure Shared (Windows arm64ec)
         if: runner.os == 'Windows' && matrix.arch == 'arm64ec' && matrix.static_only != true
         working-directory: src
         shell: cmd
