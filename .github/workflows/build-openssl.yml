@@ -145,7 +145,7 @@ jobs:
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests ^
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-asm no-tests ^
             "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" ^
             "LDFLAGS=/MACHINE:ARM64EC /DEBUG" ^
             "ARFLAGS=/MACHINE:ARM64EC"
@@ -247,13 +247,13 @@ jobs:
           ${{ matrix.setup_cmd }}
           perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
       
-      - name: Configure Static (Windows x86/x64)
+      - name: Configure Static (Windows arm64ec)
         if: runner.os == 'Windows' && matrix.arch == 'arm64ec'
         working-directory: src
         shell: cmd
         run: |
           ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O1 /D_WIN32_WINNT=0x0A00"
+          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-asm no-tests "CFLAGS=/nologo /O1 /D_WIN32_WINNT=0x0A00"
       
       - name: Configure Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
