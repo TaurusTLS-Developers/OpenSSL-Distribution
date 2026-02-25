@@ -8,28 +8,34 @@ The binaries are built automatically via GitHub Actions to ensure a clean, repro
 
 Go to the [**Releases Page**](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/releases) to download the latest artifacts.
 
+
 ## 📦 Artifacts & Structure
 
-We provide two types of packages for every platform (Windows, Linux, macOS, Android).
+We provide two distinct types of packages for every platform (Windows, Linux, macOS, Android). Please choose the one that matches your linking requirements.
 
-### 1. Runtime Package
-**Filename:** `openssl-{version}-{os}-{arch}.zip` (or `.tar.gz`)
-Contains the minimal files required to **run** an application that depends on OpenSSL.
+### 1. Redistributable Package (Runtime)
+**Filename Pattern:** `openssl-{version}-{os}-{arch}.zip` (or `.tar.gz`)
 
-*   **Content:** Shared libraries (`.dll`, `.so`, `.dylib`) and the `openssl` CLI executable.
+Use this package if your application uses **Dynamic Linking** (e.g., standard Windows applications).
+
+*   **Purpose:** Contains the files required to **run** an application.
+*   **Contents:** Shared libraries (`.dll`, `.so`, `.dylib`) and the `openssl` CLI executable.
+*   **Redistribution:** You can redistribute these files alongside your application.
 *   **Optimization:** Binaries are stripped of debug symbols for minimum size.
-*   **Relocatable:** Binaries are patched (`$ORIGIN` / `@loader_path`) to find their dependencies in the same directory, regardless of where you install them.
+*   **Relocatable:** Binaries are patched (`$ORIGIN` / `@loader_path`) to find their dependencies in the same directory.
 
-### 2. SDK / Development Package
-**Filename:** `openssl-{version}-{os}-{arch}-dev.zip` (or `.tar.gz`)
-Contains everything required to **compile** or debug applications against OpenSSL.
+### 2. Development Package (Static Linking & SDK)
+**Filename Pattern:** `openssl-{version}-{os}-{arch}-dev.zip` (or `.tar.gz`)
 
-**Directory Structure:**
-*   `bin/` - Shared libraries and Executables (Same as Runtime).
-*   `lib/` - Static libraries (`.lib` for Windows, `.a` for Unix).
-*   `include/` - C header files (`.h`).
-*   `debug/` - Debug symbols (`.pdb` for Windows, `.dSYM` for macOS, or unstripped `.so` for Linux).
-*   `doc/` - HTML documentation (where available).
+Use this package if you are a developer compiling an application with **Static Linking** (e.g., Android, iOS, or macOS).
+
+*   **Purpose:** Contains the files required to **compile** or debug applications.
+*   **Contents:**
+    *   `debug/` - Debug symbols (`.pdb`, `.dSYM`).
+    *   `doc/` - HTML documentation.
+    *   `include/` - C header files (`.h`).
+    *   `static/` - **Static libraries** (`.a` for Unix/Mobile, `.lib` for Windows) required for static linking.
+    *   `shared/` - Unstipped (for POSIX platforms) shared libraries and Executables (Same as Runtime).
 
 ### Supported Platforms
 
