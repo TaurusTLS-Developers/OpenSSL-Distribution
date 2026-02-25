@@ -35,7 +35,7 @@ Use this package if you are a developer compiling an application with **Static L
     *   `doc/` - HTML documentation.
     *   `include/` - C header files (`.h`).
     *   `static/` - **Static libraries** (`.a` for Unix/Mobile, `.lib` for Windows) required for static linking.
-    *   `shared/` - Unstipped (for POSIX platforms) shared libraries and Executables (Same as Runtime).
+    *   `shared/` - Unstripped (for POSIX platforms) shared libraries and Executables (Same as Runtime).
 
 ### Supported Platforms
 
