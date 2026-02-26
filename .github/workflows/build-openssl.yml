@@ -81,7 +81,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential perl zip
+          sudo apt-get install -y build-essential perl zip libsctp-dev
           if [ "${{ matrix.arch }}" == "arm64" ]; then sudo apt-get install -y gcc-aarch64-linux-gnu; fi
 
       - name: Download OpenSSL Source
@@ -115,7 +115,7 @@ jobs:
           if "${{ matrix.arch }}"=="arm64ec" (
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/Zi" "LDFLAGS=/DEBUG"
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/nologo /O2 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/DEBUG"
           )
           nmake && nmake install_sw && nmake install_html_docs
 
@@ -123,14 +123,16 @@ jobs:
         if: runner.os != 'Windows' && matrix.static_only != true
         working-directory: src
         run: |
+          EXTRA_FLAGS=""
           if [ "${{ matrix.os-label }}" == "Android" ]; then
             export ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME
             export PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
             export ANDROID_API=28
-          elif [ "${{ matrix.os-label }}" == "Linux" ] && [ "${{ matrix.arch }}" == "arm64" ]; then
-            export CROSS_COMPILE=${{ matrix.cross_prefix }}
+          elif [ "${{ matrix.os-label }}" == "Linux" ]; then
+            EXTRA_FLAGS="enable-sctp -Wl,-rpath,'\$ORIGIN'"
+            [ "${{ matrix.arch }}" == "arm64" ] && export CROSS_COMPILE=${{ matrix.cross_prefix }}
           fi
-          ./Configure ${{ matrix.target }} --prefix=/usr/local shared no-tests
+          ./Configure ${{ matrix.target }} --prefix=/usr/local shared no-tests $EXTRA_FLAGS
           make -j$(nproc)
           mkdir -p ../_staging
           make install_sw DESTDIR=${{ github.workspace }}/_staging
@@ -150,7 +152,7 @@ jobs:
           if "${{ matrix.arch }}"=="arm64ec" (
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
           )
           nmake && nmake install_sw
 
@@ -159,17 +161,19 @@ jobs:
         working-directory: src
         run: |
           [ -f Makefile ] && make clean || echo "No Makefile"
+          EXTRA_FLAGS=""
           if [ "${{ matrix.os-label }}" == "Android" ]; then
             export ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME
             export PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
             export ANDROID_API=28
-          elif [ "${{ matrix.os-label }}" == "Linux" ] && [ "${{ matrix.arch }}" == "arm64" ]; then
-            export CROSS_COMPILE=${{ matrix.cross_prefix }}
+          elif [ "${{ matrix.os-label }}" == "Linux" ]; then
+            EXTRA_FLAGS="enable-sctp"
+            [ "${{ matrix.arch }}" == "arm64" ] && export CROSS_COMPILE=${{ matrix.cross_prefix }}
           elif [ "${{ matrix.os-label }}" == "iOS" ]; then
             export CROSS_TOP=$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer
             export CROSS_SDK=iPhoneOS.sdk
           fi
-          ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-tests
+          ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-tests $EXTRA_FLAGS
           make -j$(nproc)
           mkdir -p ../_staging_static
           make install_sw DESTDIR=${{ github.workspace }}/_staging_static
@@ -182,42 +186,50 @@ jobs:
         shell: bash
         run: |
           mkdir -p pkg/redist/engines pkg/redist/providers
-          mkdir -p pkg/dev/shared pkg/dev/static pkg/dev/debug pkg/dev/doc pkg/dev/include
+          mkdir -p pkg/dev/shared/engines pkg/dev/shared/providers
+          mkdir -p pkg/dev/static pkg/dev/debug pkg/dev/doc pkg/dev/include
           cp src/LICENSE.txt pkg/redist/ 2>/dev/null || true
           cp src/LICENSE.txt pkg/dev/
 
           if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
-            # 1. Populate Redistributable
+            # --- REDISTRIBUTABLE (Preserve Symlinks on Unix) ---
             if [ "${{ runner.os }}" == "Windows" ]; then
               cp dist/shared/bin/*.dll pkg/redist/
               cp dist/shared/bin/*.exe pkg/redist/
               find dist/shared/lib -name "*.dll" | grep "ossl-modules" | xargs -I {} cp {} pkg/redist/providers/
               find dist/shared/lib -name "*.dll" | grep "engines-3" | xargs -I {} cp {} pkg/redist/engines/
             else
-              # Unix Logic
               LIBDIR="dist/shared/lib"; [ -d "dist/shared/lib64" ] && LIBDIR="dist/shared/lib64"
-              # Core Libs to Root
-              find $LIBDIR -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" \) -exec cp -L {} pkg/redist/ \;
+              cp -RP $LIBDIR/*.so* pkg/redist/ 2>/dev/null || true
+              cp -RP $LIBDIR/*.dylib* pkg/redist/ 2>/dev/null || true
               [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/redist/
-              # Engines & Modules to specific folders
-              find $LIBDIR -path "*/ossl-modules/*.so" -exec cp {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/ossl-modules/*.dylib" -exec cp {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.so" -exec cp {} pkg/redist/engines/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.dylib" -exec cp {} pkg/redist/engines/ \; 2>/dev/null || true
-              # Strip
+              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -P {} pkg/redist/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -P {} pkg/redist/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -P {} pkg/redist/engines/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -P {} pkg/redist/engines/ \; 2>/dev/null || true
               if [ "${{ runner.os }}" == "Linux" ]; then
                 SCMD="strip"; [ "${{ matrix.arch }}" == "arm64" ] && SCMD="${{ matrix.cross_prefix }}strip"
                 find pkg/redist/ -type f -exec $SCMD --strip-unneeded {} 2>/dev/null || true
               fi
             fi
-            # 2. Populate Dev/Shared (Mirror)
-            cp -r pkg/redist/* pkg/dev/shared/ && rm -f pkg/dev/shared/LICENSE.txt
+
+            # --- DEVELOPER SHARED (Dereference Symlinks on Unix) ---
+            if [ "${{ runner.os }}" == "Windows" ]; then
+              cp -r pkg/redist/* pkg/dev/shared/
+            else
+              cp -RL $LIBDIR/*.so* pkg/dev/shared/ 2>/dev/null || true
+              cp -RL $LIBDIR/*.dylib* pkg/dev/shared/ 2>/dev/null || true
+              [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/dev/shared/
+              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -L {} pkg/dev/shared/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -L {} pkg/dev/shared/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -L {} pkg/dev/shared/engines/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -L {} pkg/dev/shared/engines/ \; 2>/dev/null || true
+            fi
+            rm -f pkg/dev/shared/LICENSE.txt
           fi
 
-          # 3. Headers
+          # --- HEADERS, STATIC, DEBUG, DOCS ---
           cp -r dist/static/include/* pkg/dev/include/
-
-          # 4. Static Libs
           if [ "${{ runner.os }}" == "Windows" ]; then
              cp dist/static/lib/*.lib pkg/dev/static/
              cp dist/shared/lib/*.lib pkg/dev/static/ 2>/dev/null || true
@@ -226,19 +238,16 @@ jobs:
              SLIBDIR="dist/static/lib"; [ -d "dist/static/lib64" ] && SLIBDIR="dist/static/lib64"
              cp $SLIBDIR/*.a pkg/dev/static/ 2>/dev/null || true
              if [ "${{ runner.os }}" == "macOS" ] && [ -d "dist/shared" ]; then
-                # Flat dSYM bundles
                 find dist/shared -type f \( -name "*.dylib" -o -name "openssl" \) | while read -r lib; do
                    dsymutil "$lib" -o "pkg/dev/debug/$(basename "$lib").dSYM"
                 done
              fi
           fi
 
-          # 5. Docs
           [ -d "dist/shared/html" ] && cp -r dist/shared/html/* pkg/dev/doc/ || true
           [ -d "dist/static/html" ] && cp -r dist/static/html/* pkg/dev/doc/ || true
           [ -d "dist/shared/share/doc/openssl/html" ] && cp -r dist/shared/share/doc/openssl/html/* pkg/dev/doc/ || true
 
-          # 6. Final Cleanup (Recursive empty folder deletion)
           for i in {1..3}; do find pkg -type d -empty -delete 2>/dev/null; done
 
       # ------------------------------------------------------------------------
