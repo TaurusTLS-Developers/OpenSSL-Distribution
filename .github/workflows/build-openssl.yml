@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- WINDOWS ---
+          # --- WINDOWS (MSVC / UCRT / Win10) ---
           - os-label: Windows
             os-runner: windows-latest
             arch: x64
@@ -27,7 +27,7 @@ jobs:
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
-            vcvars: amd64_x86
+            vcvars: x86
           - os-label: Windows
             os-runner: windows-11-arm
             arch: arm64ec
@@ -63,10 +63,10 @@ jobs:
             target: android-arm64
           - os-label: Android
             os-runner: ubuntu-latest
-            arch: x64
+            arch: x86_64
             target: android-x86_64
 
-          # --- IOS ---
+          # --- IOS (Static Only) ---
           - os-label: iOS
             os-runner: macos-14
             arch: arm64
@@ -113,11 +113,15 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
           if "${{ matrix.arch }}"=="arm64ec" (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+            set "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00"
+            set "LFLAGS=/MACHINE:ARM64EC"
+            set "OPTS=no-asm"
           ) else (
-            :: Reverted to original workflow Configure line for x86/x64
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/nologo /O2 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/DEBUG"
+            set "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            set "LFLAGS="
+            set "OPTS="
           )
+          perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests %OPTS% "CFLAGS=%CFLAGS%" "LDFLAGS=%LFLAGS%" "ARFLAGS=%LFLAGS%"
           nmake && nmake install_sw && nmake install_html_docs
 
       - name: Build Shared (Unix/Android)
@@ -151,10 +155,15 @@ jobs:
           if exist Makefile nmake clean
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
           if "${{ matrix.arch }}"=="arm64ec" (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
+            set "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00"
+            set "LFLAGS=/MACHINE:ARM64EC"
+            set "OPTS=no-asm"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            set "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            set "LFLAGS="
+            set "OPTS="
           )
+          perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-tests %OPTS% "CFLAGS=%CFLAGS%" "LDFLAGS=%LFLAGS%" "ARFLAGS=%LFLAGS%"
           nmake && nmake install_sw
 
       - name: Build Static (Unix/Android/iOS)
@@ -186,100 +195,68 @@ jobs:
       - name: Organize Artifacts
         shell: bash
         run: |
-          mkdir -p pkg/redist/engines pkg/redist/providers
-          mkdir -p pkg/dev/shared/engines pkg/dev/shared/providers
-          mkdir -p pkg/dev/static pkg/dev/debug pkg/dev/doc pkg/dev/include
-          cp src/LICENSE.txt pkg/redist/ 2>/dev/null || true
-          cp src/LICENSE.txt pkg/dev/
+          mkdir -p pkg/engines pkg/providers pkg/lib pkg/doc pkg/include
+          cp src/LICENSE.txt pkg/
 
+          # 1. Shared Libraries & Binary (Root + Modules)
           if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
-            # --- REDISTRIBUTABLE (Preserve Symlinks on Unix) ---
             if [ "${{ runner.os }}" == "Windows" ]; then
-              cp dist/shared/bin/*.dll pkg/redist/
-              cp dist/shared/bin/*.exe pkg/redist/
-              find dist/shared/lib -name "*.dll" | grep "ossl-modules" | xargs -I {} cp {} pkg/redist/providers/
-              find dist/shared/lib -name "*.dll" | grep "engines-3" | xargs -I {} cp {} pkg/redist/engines/
+              cp dist/shared/bin/*.dll pkg/
+              cp dist/shared/bin/*.exe pkg/
+              find dist/shared/lib -name "*.dll" | grep "ossl-modules" | xargs -I {} cp {} pkg/providers/
+              find dist/shared/lib -name "*.dll" | grep "engines-3" | xargs -I {} cp {} pkg/engines/
             else
               LIBDIR="dist/shared/lib"; [ -d "dist/shared/lib64" ] && LIBDIR="dist/shared/lib64"
-              # cp -RP preserves symlinks for Redist
-              cp -RP $LIBDIR/*.so* pkg/redist/ 2>/dev/null || true
-              cp -RP $LIBDIR/*.dylib* pkg/redist/ 2>/dev/null || true
-              [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/redist/
-              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -RP {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -RP {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -RP {} pkg/redist/engines/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -RP {} pkg/redist/engines/ \; 2>/dev/null || true
-              if [ "${{ runner.os }}" == "Linux" ]; then
-                SCMD="strip"; [ "${{ matrix.arch }}" == "arm64" ] && SCMD="${{ matrix.cross_prefix }}strip"
-                find pkg/redist/ -type f -exec $SCMD --strip-unneeded {} 2>/dev/null || true
-              fi
+              # Preserve symlinks for shared libs in the package
+              cp -RP $LIBDIR/*.so* pkg/ 2>/dev/null || true
+              cp -RP $LIBDIR/*.dylib* pkg/ 2>/dev/null || true
+              [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/
+              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -RP {} pkg/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -RP {} pkg/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -RP {} pkg/engines/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -RP {} pkg/engines/ \; 2>/dev/null || true
             fi
-
-            # --- DEVELOPER SHARED (Dereference Symlinks on Unix) ---
-            if [ "${{ runner.os }}" == "Windows" ]; then
-              cp -r pkg/redist/* pkg/dev/shared/
-            else
-              # cp -RL dereferences symlinks (creates physical files) for Dev
-              cp -RL $LIBDIR/*.so* pkg/dev/shared/ 2>/dev/null || true
-              cp -RL $LIBDIR/*.dylib* pkg/dev/shared/ 2>/dev/null || true
-              [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/dev/shared/
-              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -L {} pkg/dev/shared/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -L {} pkg/dev/shared/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -L {} pkg/dev/shared/engines/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -L {} pkg/dev/shared/engines/ \; 2>/dev/null || true
-            fi
-            rm -f pkg/dev/shared/LICENSE.txt
           fi
 
-          # --- HEADERS, STATIC, DEBUG, DOCS ---
-          cp -r dist/static/include/* pkg/dev/include/
+          # 2. Static Libraries (Stripped)
           if [ "${{ runner.os }}" == "Windows" ]; then
-             cp dist/static/lib/*.lib pkg/dev/static/
-             cp dist/shared/lib/*.lib pkg/dev/static/ 2>/dev/null || true
-             find dist/shared/bin -name "*.pdb" -exec cp {} pkg/dev/debug/ \;
+             cp dist/static/lib/*.lib pkg/lib/
+             # llvm-strip is available on windows-latest to strip .lib files
+             find pkg/lib -name "*.lib" -exec llvm-strip --strip-debug {} \;
           else
              SLIBDIR="dist/static/lib"; [ -d "dist/static/lib64" ] && SLIBDIR="dist/static/lib64"
-             cp $SLIBDIR/*.a pkg/dev/static/ 2>/dev/null || true
-             if [ "${{ runner.os }}" == "macOS" ] && [ -d "dist/shared" ]; then
-                # Flat dSYM bundles (ignore symlinks)
-                find dist/shared -type f \( -name "*.dylib" -o -name "openssl" \) -not -type l | while read -r lib; do
-                   dsymutil "$lib" -o "pkg/dev/debug/$(basename "$lib").dSYM"
-                done
-             fi
+             cp $SLIBDIR/*.a pkg/lib/ 2>/dev/null || true
+             # Standard strip for .a files
+             STRIP_CMD="strip"; [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ] && STRIP_CMD="${{ matrix.cross_prefix }}strip"
+             find pkg/lib -name "*.a" -exec $STRIP_CMD --strip-debug {} \;
           fi
 
-          [ -d "dist/shared/html" ] && cp -r dist/shared/html/* pkg/dev/doc/ || true
-          [ -d "dist/static/html" ] && cp -r dist/static/html/* pkg/dev/doc/ || true
-          [ -d "dist/shared/share/doc/openssl/html" ] && cp -r dist/shared/share/doc/openssl/html/* pkg/dev/doc/ || true
+          # 3. Headers & Docs
+          cp -r dist/static/include/* pkg/include/
+          [ -d "dist/shared/html" ] && cp -r dist/shared/html/* pkg/doc/ || true
+          [ -d "dist/static/html" ] && cp -r dist/static/html/* pkg/doc/ || true
+          [ -d "dist/shared/share/doc/openssl/html" ] && cp -r dist/shared/share/doc/openssl/html/* pkg/doc/ || true
 
+          # 4. Cleanup empty folders
           for i in {1..3}; do find pkg -type d -empty -delete 2>/dev/null; done
 
       # ------------------------------------------------------------------------
       # FINAL PACKING
       # ------------------------------------------------------------------------
-      - name: Create Final Archives
+      - name: Create Final Archive
         shell: bash
         run: |
           BASE_NAME="openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}"
+          if [ ! -d "pkg" ] || [ -z "$(ls -A "pkg")" ]; then exit 0; fi
           
-          pack_it() {
-            local folder=$1
-            local out_base=$2
-            if [ ! -d "$folder" ] || [ -z "$(ls -A "$folder")" ]; then return; fi
-            
-            if [ "${{ runner.os }}" == "Windows" ]; then
-              (cd "$folder" && 7z a -tzip "../../${out_base}.zip" .)
-            else
-              (cd "$folder" && tar -czvf "../../${out_base}.tar.gz" .)
-            fi
-          }
-
-          if [ "${{ matrix.static_only }}" != "true" ]; then
-             pack_it "pkg/redist" "${BASE_NAME}-redist"
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            (cd pkg && 7z a -tzip "../${BASE_NAME}.zip" .)
+          else
+            # tar.gz for POSIX to preserve symlinks and permissions
+            (cd pkg && tar -czvf "../${BASE_NAME}.tar.gz" .)
           fi
-          pack_it "pkg/dev" "${BASE_NAME}-dev"
 
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
