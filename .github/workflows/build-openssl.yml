@@ -115,6 +115,7 @@ jobs:
           if "${{ matrix.arch }}"=="arm64ec" (
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           ) else (
+            :: Reverted to original workflow Configure line for x86/x64
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/nologo /O2 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/DEBUG"
           )
           nmake && nmake install_sw && nmake install_html_docs
@@ -200,13 +201,14 @@ jobs:
               find dist/shared/lib -name "*.dll" | grep "engines-3" | xargs -I {} cp {} pkg/redist/engines/
             else
               LIBDIR="dist/shared/lib"; [ -d "dist/shared/lib64" ] && LIBDIR="dist/shared/lib64"
+              # cp -RP preserves symlinks for Redist
               cp -RP $LIBDIR/*.so* pkg/redist/ 2>/dev/null || true
               cp -RP $LIBDIR/*.dylib* pkg/redist/ 2>/dev/null || true
               [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/redist/
-              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -P {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -P {} pkg/redist/providers/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -P {} pkg/redist/engines/ \; 2>/dev/null || true
-              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -P {} pkg/redist/engines/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/ossl-modules/*.so*" -exec cp -RP {} pkg/redist/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/ossl-modules/*.dylib*" -exec cp -RP {} pkg/redist/providers/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.so*" -exec cp -RP {} pkg/redist/engines/ \; 2>/dev/null || true
+              find $LIBDIR -path "*/engines-3/*.dylib*" -exec cp -RP {} pkg/redist/engines/ \; 2>/dev/null || true
               if [ "${{ runner.os }}" == "Linux" ]; then
                 SCMD="strip"; [ "${{ matrix.arch }}" == "arm64" ] && SCMD="${{ matrix.cross_prefix }}strip"
                 find pkg/redist/ -type f -exec $SCMD --strip-unneeded {} 2>/dev/null || true
@@ -217,6 +219,7 @@ jobs:
             if [ "${{ runner.os }}" == "Windows" ]; then
               cp -r pkg/redist/* pkg/dev/shared/
             else
+              # cp -RL dereferences symlinks (creates physical files) for Dev
               cp -RL $LIBDIR/*.so* pkg/dev/shared/ 2>/dev/null || true
               cp -RL $LIBDIR/*.dylib* pkg/dev/shared/ 2>/dev/null || true
               [ -f dist/shared/bin/openssl ] && cp dist/shared/bin/openssl pkg/dev/shared/
@@ -238,7 +241,8 @@ jobs:
              SLIBDIR="dist/static/lib"; [ -d "dist/static/lib64" ] && SLIBDIR="dist/static/lib64"
              cp $SLIBDIR/*.a pkg/dev/static/ 2>/dev/null || true
              if [ "${{ runner.os }}" == "macOS" ] && [ -d "dist/shared" ]; then
-                find dist/shared -type f \( -name "*.dylib" -o -name "openssl" \) | while read -r lib; do
+                # Flat dSYM bundles (ignore symlinks)
+                find dist/shared -type f \( -name "*.dylib" -o -name "openssl" \) -not -type l | while read -r lib; do
                    dsymutil "$lib" -o "pkg/dev/debug/$(basename "$lib").dSYM"
                 done
              fi
