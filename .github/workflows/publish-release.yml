@@ -73,21 +73,21 @@ jobs:
           VERSION=$(cat metadata/version.txt | xargs)
           echo "Detected OpenSSL Version: $VERSION"
           
-          # Determine Tag Name
-          TAG_NAME="v.$VERSION"
-          echo "Target Tag: $TAG_NAME"
-
           # Determine Release Suffix
           BRANCH="${{ github.ref_name }}"
-          if [ "$BRANCH" -ne "${{ github.event.repository.default_branch }}"]
+          if [[ "$BRANCH" != "${{ github.event.repository.default_branch }}" ]]
           then
             SUFFIX="-$BRANCH"
           else
             SUFFIX=""
           fi
           
+          # Determine Tag Name
+          TAG_NAME="v.$VERSION$SUFFIX"
+          echo "Target Tag: $TAG_NAME"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag_name=$TAG_NAME$SUFFIX" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Create or Update Release
         env:
