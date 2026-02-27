@@ -61,7 +61,7 @@ jobs:
         id: config
         shell: bash
         run: |
-          if[ ! -f "metadata/version.txt" ]; then
+          if [ ! -f "metadata/version.txt" ]; then
             echo "Error: metadata/version.txt not found!"
             exit 1
           fi
