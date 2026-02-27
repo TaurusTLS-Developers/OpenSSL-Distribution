@@ -200,6 +200,9 @@ jobs:
       # ------------------------------------------------------------------------
       # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
       # ------------------------------------------------------------------------
+      # ------------------------------------------------------------------------
+      # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
+      # ------------------------------------------------------------------------
       - name: Organize Artifacts
         shell: bash
         run: |
@@ -216,9 +219,9 @@ jobs:
           Package Layout:
           ---------------
           * openssl             - The OpenSSL command-line utility [redistributable/optional]
-          * libcrypto / libssl  - Shared libraries[redistributable/required] 
+          * libcrypto / libssl  - Shared libraries [redistributable/required] 
           * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks[redistributable/optional] 
-          * engines/            - OpenSSL engines[redistributable/optional] 
+          * engines/            - OpenSSL engines [redistributable/optional] 
           * providers/          - OpenSSL providers [redistributable/optional] 
           * doc/                - Developers Documentation [non-redistributable] 
           * include/            - C Header files[non-redistributable] 
@@ -232,7 +235,7 @@ jobs:
           If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.3).
           
           $ cd <extracted_directory>
-          $ sh ./install_symlinks.sh
+          $ ./install_symlinks.sh
           
           Windows Users:
           --------------
@@ -250,18 +253,25 @@ jobs:
               LIBDIR="dist/shared/lib"
               if [ -d "dist/shared/lib64" ]; then LIBDIR="dist/shared/lib64"; fi
               
+              # Copy REAL files only (Strictly ignoring symlinks)
               for file in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then cp "$file" pkg/; fi
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                  cp "$file" pkg/
+                fi
               done
               
               if [ -f dist/shared/bin/openssl ]; then cp dist/shared/bin/openssl pkg/; fi
               
               for file in "$LIBDIR"/ossl-modules/*.so* "$LIBDIR"/ossl-modules/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then cp "$file" pkg/providers/; fi
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                  cp "$file" pkg/providers/
+                fi
               done
               
               for file in "$LIBDIR"/engines-3/*.so* "$LIBDIR"/engines-3/*.dylib*; do
-                if [ -f "$file" ] &&[ ! -L "$file" ]; then cp "$file" pkg/engines/; fi
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                  cp "$file" pkg/engines/
+                fi
               done
               
               # Generate Symlink Script
@@ -280,16 +290,53 @@ jobs:
                 fi
               done
               
-              if [ "$SYMLINKS_FOUND" = true ]; then chmod +x "$SCRIPT_FILE"; else rm -f "$SCRIPT_FILE"; fi
+              # --- macOS Relocatability & Duplicate Cleanup ---
+              if [ "${{ runner.os }}" == "macOS" ]; then
+                echo "Making macOS binaries relocatable and cleaning duplicates..."
+                
+                # Clean up the duplicate unversioned dylibs to save space
+                rm -f pkg/libcrypto.dylib pkg/libssl.dylib
+                
+                # Force script to create the symlinks
+                echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
+                echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
+                SYMLINKS_FOUND=true
+
+                # Fix the ID of the main shared libraries
+                for lib in pkg/lib*.dylib; do
+                  if [ -f "$lib" ]; then
+                    install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
+                  fi
+                done
+                
+                # Fix dependencies in all binaries
+                find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
+                  DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
+                  for dep in $DEPS; do
+                    depname=$(basename "$dep")
+                    if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
+                      install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
+                    else
+                      install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
+                    fi
+                  done
+                  install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+                  install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
+                done
+              fi
+              
+              if [ "$SYMLINKS_FOUND" = true ]; then
+                  chmod +x "$SCRIPT_FILE"
+              else
+                  rm -f "$SCRIPT_FILE"
+              fi
             fi
           fi
 
-          # 2. Static & Import Libraries (FIXED WINDOWS COLLISION)
+          # 2. Static & Import Libraries
           if [ "${{ runner.os }}" == "Windows" ]; then
              mkdir -p pkg/lib/static
-             # Import libs go to lib/
              cp dist/shared/lib/*.lib pkg/lib/ 2>/dev/null || true
-             # True static libs go to lib/static/
              cp dist/static/lib/*.lib pkg/lib/static/ 2>/dev/null || true
           else
              SLIBDIR="dist/static/lib"
@@ -302,7 +349,9 @@ jobs:
              find pkg/lib -name "*.lib" -exec llvm-strip --strip-debug {} \; 2>/dev/null || true
           else
              STRIP_CMD="strip"
-             if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then STRIP_CMD="${{ matrix.cross_prefix }}strip"; fi
+             if [ "${{ matrix.arch }}" == "arm64" ] &&[ "${{ runner.os }}" == "Linux" ]; then
+               STRIP_CMD="${{ matrix.cross_prefix }}strip"
+             fi
              find pkg -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
              find pkg/engines -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
              find pkg/providers -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
