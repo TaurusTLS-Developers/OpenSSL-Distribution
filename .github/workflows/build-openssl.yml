@@ -232,7 +232,7 @@ jobs:
           If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.3).
           
           $ cd <extracted_directory>
-          $ ./install_symlinks.sh
+          $ sh ./install_symlinks.sh
           
           Windows Users:
           --------------
