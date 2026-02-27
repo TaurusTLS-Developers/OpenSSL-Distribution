@@ -331,5 +331,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openssl-${{ matrix.os-label }}-${{ matrix.arch }}
+          name: openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}
           path: pkg/
