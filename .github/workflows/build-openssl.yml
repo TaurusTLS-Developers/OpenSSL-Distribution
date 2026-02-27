@@ -216,13 +216,14 @@ jobs:
           Package Layout:
           ---------------
           * openssl             - The OpenSSL command-line utility [redistributable/optional]
-          * libcrypto / libssl  - shared libraries [redistributable/required] 
-          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
-          * engines/            - OpenSSL engines [redistributable/optional] 
+          * libcrypto / libssl  - Shared libraries[redistributable/required] 
+          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks[redistributable/optional] 
+          * engines/            - OpenSSL engines[redistributable/optional] 
           * providers/          - OpenSSL providers [redistributable/optional] 
           * doc/                - Developers Documentation [non-redistributable] 
-          * include/            - C Header files [non-redistributable] 
-          * lib/                - Static libraries [non-redistributable] 
+          * include/            - C Header files[non-redistributable] 
+          * lib/                - Import libs (Win) / Static libs (Unix)[non-redistributable] 
+          * lib/static/         - Static libs (Windows only)[non-redistributable]
           
           Deployment Instructions (Linux / macOS / Unix):
           -----------------------------------------------
@@ -239,7 +240,7 @@ jobs:
           EOF
 
           # 1. Shared Libraries & Binary
-          if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
+          if [ "${{ matrix.static_only }}" != "true" ] &&[ -d "dist/shared" ]; then
             if [ "${{ runner.os }}" == "Windows" ]; then
               cp dist/shared/bin/*.dll pkg/ 2>/dev/null || true
               cp dist/shared/bin/*.exe pkg/ 2>/dev/null || true
@@ -249,25 +250,18 @@ jobs:
               LIBDIR="dist/shared/lib"
               if [ -d "dist/shared/lib64" ]; then LIBDIR="dist/shared/lib64"; fi
               
-              # Copy REAL files only (Strictly ignoring symlinks)
               for file in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then
-                  cp "$file" pkg/
-                fi
+                if [ -f "$file" ] && [ ! -L "$file" ]; then cp "$file" pkg/; fi
               done
               
               if [ -f dist/shared/bin/openssl ]; then cp dist/shared/bin/openssl pkg/; fi
               
               for file in "$LIBDIR"/ossl-modules/*.so* "$LIBDIR"/ossl-modules/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then
-                  cp "$file" pkg/providers/
-                fi
+                if[ -f "$file" ] && [ ! -L "$file" ]; then cp "$file" pkg/providers/; fi
               done
               
               for file in "$LIBDIR"/engines-3/*.so* "$LIBDIR"/engines-3/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then
-                  cp "$file" pkg/engines/
-                fi
+                if [ -f "$file" ] &&[ ! -L "$file" ]; then cp "$file" pkg/engines/; fi
               done
               
               # Generate Symlink Script
@@ -276,78 +270,39 @@ jobs:
               echo "echo 'Restoring shared library symlinks...'" >> "$SCRIPT_FILE"
               
               SYMLINKS_FOUND=false
-              
-              # Standard POSIX symlink detection
-              for link in $(find "$LIBDIR" -maxdepth 1 -type l \( -name "*.so*" -o -name "*.dylib" \)); do
+              for link in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
+                if [ -L "$link" ]; then
                   link_name=$(basename "$link")
                   target=$(readlink "$link")
                   target_base=$(basename "$target")
                   echo "ln -sf \"$target_base\" \"$link_name\"" >> "$SCRIPT_FILE"
                   SYMLINKS_FOUND=true
+                fi
               done
               
-              # --- macOS Relocatability & Duplicate Cleanup ---
-              if [ "${{ runner.os }}" == "macOS" ]; then
-                echo "Making macOS binaries relocatable..."
-                
-                # 1. Fix the ID of the main shared libraries
-                for lib in pkg/lib*.dylib; do
-                  if [ -f "$lib" ]; then
-                    install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
-                  fi
-                done
-                
-                # 2. Fix dependencies in all binaries (executable, dylibs, engines, providers)
-                find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
-                  # Use awk instead of grep to avoid exit code 1 when no matches are found
-                  DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
-                  for dep in $DEPS; do
-                    depname=$(basename "$dep")
-                    # Engines/providers are in subfolders, so they need ../ to find the root libs
-                    if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
-                      install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
-                    else
-                      install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
-                    fi
-                  done
-                  # Ensure the binary knows to look in the current directory
-                  install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
-                  install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
-                done
-                
-                # 3. Clean up the duplicate unversioned dylibs to save space
-                rm -f pkg/libcrypto.dylib pkg/libssl.dylib
-                
-                # 4. Force script to create the symlinks
-                echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
-                echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
-                SYMLINKS_FOUND=true
-              fi
-              
-              if [ "$SYMLINKS_FOUND" = true ]; then
-                  chmod +x "$SCRIPT_FILE"
-              else
-                  rm -f "$SCRIPT_FILE"
-              fi
+              if [ "$SYMLINKS_FOUND" = true ]; then chmod +x "$SCRIPT_FILE"; else rm -f "$SCRIPT_FILE"; fi
             fi
           fi
 
-          # 2. Static Libraries
+          # 2. Static & Import Libraries (FIXED WINDOWS COLLISION)
           if [ "${{ runner.os }}" == "Windows" ]; then
-             cp dist/static/lib/*.lib pkg/lib/ 2>/dev/null || true
+             mkdir -p pkg/lib/static
+             # Import libs go to lib/
              cp dist/shared/lib/*.lib pkg/lib/ 2>/dev/null || true
+             # True static libs go to lib/static/
+             cp dist/static/lib/*.lib pkg/lib/static/ 2>/dev/null || true
           else
              SLIBDIR="dist/static/lib"
              if [ -d "dist/static/lib64" ]; then SLIBDIR="dist/static/lib64"; fi
              cp "$SLIBDIR"/*.a pkg/lib/ 2>/dev/null || true
           fi
 
-          # 3. Strip Symbols (Unix)
-          if [ "${{ runner.os }}" != "Windows" ]; then
+          # 3. Strip Symbols
+          if[ "${{ runner.os }}" == "Windows" ]; then
+             find pkg/lib -name "*.lib" -exec llvm-strip --strip-debug {} \; 2>/dev/null || true
+          else
              STRIP_CMD="strip"
-             if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
-               STRIP_CMD="${{ matrix.cross_prefix }}strip"
-             fi
+             if[ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then STRIP_CMD="${{ matrix.cross_prefix }}strip"; fi
              find pkg -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
              find pkg/engines -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
              find pkg/providers -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
@@ -358,16 +313,34 @@ jobs:
           cp -r dist/static/include/* pkg/include/ 2>/dev/null || true
           if [ -d "dist/shared/html" ]; then cp -r dist/shared/html/* pkg/doc/ 2>/dev/null || true; fi
           if [ -d "dist/static/html" ]; then cp -r dist/static/html/* pkg/doc/ 2>/dev/null || true; fi
-          if [ -d "dist/shared/share/doc/openssl/html" ]; then cp -r dist/shared/share/doc/openssl/html/* pkg/doc/ 2>/dev/null || true; fi
+          if[ -d "dist/shared/share/doc/openssl/html" ]; then cp -r dist/shared/share/doc/openssl/html/* pkg/doc/ 2>/dev/null || true; fi
 
           # 5. Cleanup empty folders
           for i in {1..3}; do find pkg -type d -empty -delete 2>/dev/null || true; done
 
       # ------------------------------------------------------------------------
-      # FINAL UPLOAD (Handled natively by GitHub Actions)
+      # FINAL PACKING
+      # ------------------------------------------------------------------------
+      - name: Create Final Archive
+        shell: bash
+        run: |
+          BASE_NAME="openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}"
+          if[ ! -d "pkg" ] || [ -z "$(ls -A "pkg")" ]; then exit 0; fi
+          
+          if[ "${{ runner.os }}" == "Windows" ]; then
+            (cd pkg && 7z a -tzip "../${BASE_NAME}.zip" .)
+            echo "ARCHIVE_FILE=${BASE_NAME}.zip" >> $GITHUB_ENV
+          else
+            (cd pkg && tar -czvf "../${BASE_NAME}.tar.gz" .)
+            echo "ARCHIVE_FILE=${BASE_NAME}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      # ------------------------------------------------------------------------
+      # FINAL UPLOAD
       # ------------------------------------------------------------------------
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}
-          path: pkg/
+          path: ${{ env.ARCHIVE_FILE }}
+          archive: false
