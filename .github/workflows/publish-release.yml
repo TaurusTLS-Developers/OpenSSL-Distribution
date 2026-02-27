@@ -39,6 +39,9 @@ jobs:
           echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
           echo "IS_DRAFT=${{ inputs.is_draft }}" >> $GITHUB_ENV
 
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        
       - name: Download Build Metadata
         uses: actions/download-artifact@v4
         with:
