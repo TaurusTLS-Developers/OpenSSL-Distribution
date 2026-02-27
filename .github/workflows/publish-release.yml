@@ -107,7 +107,7 @@ jobs:
             fi
             
             gh release create "$TAG_NAME" \
-              --title "OpenSSL $VERSION" \
+              --title "OpenSSL Distribution $VERSION" \
               --notes "Pre-compiled OpenSSL $VERSION binaries for multiple platforms." \
               $DRAFT_FLAG
           fi
