@@ -10,7 +10,22 @@ on:
         default: '3.4.0'
 
 jobs:
+  prepare-metadata:
+    name: Prepare Build Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save Version Info
+        run: echo "${{ inputs.version }}" > version.txt
+      
+      - name: Upload Metadata Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-metadata
+          path: version.txt
+          retention-days: 1 # Only needed temporarily for the publish workflow
+
   build:
+    needs: prepare-metadata # Ensures metadata is ready before builds start
     name: ${{ matrix.os-label }} - ${{ matrix.arch }}
     runs-on: ${{ matrix.os-runner }}
     strategy:
@@ -216,6 +231,7 @@ jobs:
           
           Package Layout:
           ---------------
+          * version.txt         - OpenSSL version in this package [non-redistributable]
           * openssl             - The OpenSSL command-line utility [redistributable/optional]
           * libcrypto / libssl  - Shared libraries[redistributable/required] 
           * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
@@ -246,6 +262,9 @@ jobs:
           --------------
           Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
           EOF
+
+          # --- Generate Version File ---
+          echo "${{ inputs.version }}" > pkg/version.txt
 
           # 1. Shared Libraries & Binary
           if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
