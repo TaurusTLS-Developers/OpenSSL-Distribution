@@ -200,13 +200,11 @@ jobs:
       # ------------------------------------------------------------------------
       # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
       # ------------------------------------------------------------------------
-      # ------------------------------------------------------------------------
-      # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
-      # ------------------------------------------------------------------------
       - name: Organize Artifacts
         shell: bash
         run: |
-          mkdir -p pkg/engines pkg/providers pkg/lib pkg/doc pkg/include
+          # Create unified directory structure
+          mkdir -p pkg/engines pkg/providers pkg/lib/static pkg/lib/import pkg/doc pkg/include
           if [ -f src/LICENSE.txt ]; then cp src/LICENSE.txt pkg/; fi
 
           # --- Generate README ---
@@ -219,14 +217,21 @@ jobs:
           Package Layout:
           ---------------
           * openssl             - The OpenSSL command-line utility [redistributable/optional]
-          * libcrypto / libssl  - Shared libraries [redistributable/required] 
-          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks[redistributable/optional] 
+          * libcrypto / libssl  - Shared libraries[redistributable/required] 
+          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
           * engines/            - OpenSSL engines [redistributable/optional] 
-          * providers/          - OpenSSL providers [redistributable/optional] 
+          * providers/          - OpenSSL providers[redistributable/optional] 
           * doc/                - Developers Documentation [non-redistributable] 
-          * include/            - C Header files[non-redistributable] 
-          * lib/                - Import libs (Win) / Static libs (Unix)[non-redistributable] 
-          * lib/static/         - Static libs (Windows only)[non-redistributable]
+          * include/            - C Header files [non-redistributable] 
+          * lib/import/         - Import libraries (Windows only) [non-redistributable] 
+          * lib/static/         - Static libraries (.lib / .a) [non-redistributable]
+          
+          Linking Instructions:
+          ---------------------
+          * Windows Dynamic: Link against the import libraries in `lib/import/` (which point to the DLLs in the root).
+          * Windows Static:  Link against the static libraries in `lib/static/` (Compiled with /MD Dynamic CRT).
+          * POSIX Dynamic:   Link directly against the shared libraries (.so / .dylib) in the root directory.
+          * POSIX Static:    Link against the static archives (.a) in `lib/static/`.
           
           Deployment Instructions (Linux / macOS / Unix):
           -----------------------------------------------
@@ -235,7 +240,7 @@ jobs:
           If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.3).
           
           $ cd <extracted_directory>
-          $ ./install_symlinks.sh
+          $ sh ./install_symlinks.sh
           
           Windows Users:
           --------------
@@ -243,7 +248,7 @@ jobs:
           EOF
 
           # 1. Shared Libraries & Binary
-          if [ "${{ matrix.static_only }}" != "true" ] &&[ -d "dist/shared" ]; then
+          if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
             if [ "${{ runner.os }}" == "Windows" ]; then
               cp dist/shared/bin/*.dll pkg/ 2>/dev/null || true
               cp dist/shared/bin/*.exe pkg/ 2>/dev/null || true
@@ -255,7 +260,7 @@ jobs:
               
               # Copy REAL files only (Strictly ignoring symlinks)
               for file in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
-                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                if [ -f "$file" ] &&[ ! -L "$file" ]; then
                   cp "$file" pkg/
                 fi
               done
@@ -294,22 +299,18 @@ jobs:
               if [ "${{ runner.os }}" == "macOS" ]; then
                 echo "Making macOS binaries relocatable and cleaning duplicates..."
                 
-                # Clean up the duplicate unversioned dylibs to save space
                 rm -f pkg/libcrypto.dylib pkg/libssl.dylib
                 
-                # Force script to create the symlinks
                 echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
                 echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
                 SYMLINKS_FOUND=true
 
-                # Fix the ID of the main shared libraries
                 for lib in pkg/lib*.dylib; do
                   if [ -f "$lib" ]; then
                     install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
                   fi
                 done
                 
-                # Fix dependencies in all binaries
                 find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
                   DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
                   for dep in $DEPS; do
@@ -333,23 +334,23 @@ jobs:
             fi
           fi
 
-          # 2. Static & Import Libraries
+          # 2. Static & Import Libraries (Unified Structure)
           if [ "${{ runner.os }}" == "Windows" ]; then
-             mkdir -p pkg/lib/static
-             cp dist/shared/lib/*.lib pkg/lib/ 2>/dev/null || true
+             cp dist/shared/lib/*.lib pkg/lib/import/ 2>/dev/null || true
              cp dist/static/lib/*.lib pkg/lib/static/ 2>/dev/null || true
           else
              SLIBDIR="dist/static/lib"
              if [ -d "dist/static/lib64" ]; then SLIBDIR="dist/static/lib64"; fi
-             cp "$SLIBDIR"/*.a pkg/lib/ 2>/dev/null || true
+             # POSIX static libraries go to lib/static/
+             cp "$SLIBDIR"/*.a pkg/lib/static/ 2>/dev/null || true
           fi
 
-          # 3. Strip Symbols
+          # 3. Strip Symbols (find is recursive, so it handles lib/static/ and lib/import/ automatically)
           if [ "${{ runner.os }}" == "Windows" ]; then
              find pkg/lib -name "*.lib" -exec llvm-strip --strip-debug {} \; 2>/dev/null || true
           else
              STRIP_CMD="strip"
-             if [ "${{ matrix.arch }}" == "arm64" ] &&[ "${{ runner.os }}" == "Linux" ]; then
+             if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
                STRIP_CMD="${{ matrix.cross_prefix }}strip"
              fi
              find pkg -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
@@ -364,7 +365,7 @@ jobs:
           if [ -d "dist/static/html" ]; then cp -r dist/static/html/* pkg/doc/ 2>/dev/null || true; fi
           if [ -d "dist/shared/share/doc/openssl/html" ]; then cp -r dist/shared/share/doc/openssl/html/* pkg/doc/ 2>/dev/null || true; fi
 
-          # 5. Cleanup empty folders
+          # 5. Cleanup empty folders (This will safely remove pkg/lib/import on POSIX)
           for i in {1..3}; do find pkg -type d -empty -delete 2>/dev/null || true; done
 
       # ------------------------------------------------------------------------
