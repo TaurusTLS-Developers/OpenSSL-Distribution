@@ -18,22 +18,22 @@ jobs:
       matrix:
         include:
           # --- WINDOWS ---
-          - os-label: Windows
-            os-runner: windows-latest
-            arch: x64
-            target: VC-WIN64A
-            vcvars: x64
-          - os-label: Windows
-            os-runner: windows-latest
-            arch: x86
-            target: VC-WIN32
-            vcvars: x86
-          - os-label: Windows
-            os-runner: windows-11-arm
-            arch: arm64ec
-            target: VC-WIN64-ARM
-            vcvars: arm64
-            no_asm: true
+#          - os-label: Windows
+#            os-runner: windows-latest
+#            arch: x64
+#            target: VC-WIN64A
+#            vcvars: x64
+#          - os-label: Windows
+#            os-runner: windows-latest
+#            arch: x86
+#            target: VC-WIN32
+#            vcvars: x86
+#          - os-label: Windows
+#            os-runner: windows-11-arm
+#            arch: arm64ec
+#            target: VC-WIN64-ARM
+#            vcvars: arm64
+#            no_asm: true
 
           # --- LINUX ---
           - os-label: Linux
@@ -276,15 +276,53 @@ jobs:
               echo "echo 'Restoring shared library symlinks...'" >> "$SCRIPT_FILE"
               
               SYMLINKS_FOUND=false
-              for link in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
-                if [ -L "$link" ]; then
+              
+              # Standard POSIX symlink detection
+              for link in $(find "$LIBDIR" -maxdepth 1 -type l \( -name "*.so*" -o -name "*.dylib" \)); do
                   link_name=$(basename "$link")
                   target=$(readlink "$link")
                   target_base=$(basename "$target")
                   echo "ln -sf \"$target_base\" \"$link_name\"" >> "$SCRIPT_FILE"
                   SYMLINKS_FOUND=true
-                fi
               done
+              
+              # --- macOS Relocatability & Duplicate Cleanup ---
+              if [ "${{ runner.os }}" == "macOS" ]; then
+                echo "Making macOS binaries relocatable..."
+                
+                # 1. Fix the ID of the main shared libraries
+                for lib in pkg/lib*.dylib; do
+                  if [ -f "$lib" ]; then
+                    install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
+                  fi
+                done
+                
+                # 2. Fix dependencies in all binaries (executable, dylibs, engines, providers)
+                find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
+                  # Use awk instead of grep to avoid exit code 1 when no matches are found
+                  DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
+                  for dep in $DEPS; do
+                    depname=$(basename "$dep")
+                    # Engines/providers are in subfolders, so they need ../ to find the root libs
+                    if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
+                      install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
+                    else
+                      install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
+                    fi
+                  done
+                  # Ensure the binary knows to look in the current directory
+                  install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+                  install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
+                done
+                
+                # 3. Clean up the duplicate unversioned dylibs to save space
+                rm -f pkg/libcrypto.dylib pkg/libssl.dylib
+                
+                # 4. Force script to create the symlinks
+                echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
+                echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
+                SYMLINKS_FOUND=true
+              fi
               
               if [ "$SYMLINKS_FOUND" = true ]; then
                   chmod +x "$SCRIPT_FILE"
