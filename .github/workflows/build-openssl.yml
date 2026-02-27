@@ -375,15 +375,15 @@ jobs:
         shell: bash
         run: |
           BASE_NAME="openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}"
-          if [ ! -d "pkg" ] || [ -z "$(ls -A "pkg")" ]; then exit 0; fi
+          if [ ! -d "pkg" ] ||[ -z "$(ls -A "pkg")" ]; then exit 0; fi
           
           if [ "${{ runner.os }}" == "Windows" ]; then
             (cd pkg && 7z a -tzip "../${BASE_NAME}.zip" .)
-            echo "ARCHIVE_FILE=${BASE_NAME}.zip" >> $GITHUB_ENV
           else
-            (cd pkg && tar -czvf "../${BASE_NAME}.tar.gz" .)
-            echo "ARCHIVE_FILE=${BASE_NAME}.tar.gz" >> $GITHUB_ENV
+            (cd pkg && zip -r "../${BASE_NAME}.zip" .)
           fi
+          
+          echo "ARCHIVE_FILE=${BASE_NAME}.zip" >> $GITHUB_ENV
 
       # ------------------------------------------------------------------------
       # FINAL UPLOAD
