@@ -1,5 +1,5 @@
-name: Build OpenSSL 3.x Multi-Platform
-run-name: Build OpenSSL ${{ inputs.version }}
+name: Build OpenSSL 3.x
+run-name: Build OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
 
 on:
   workflow_dispatch:
