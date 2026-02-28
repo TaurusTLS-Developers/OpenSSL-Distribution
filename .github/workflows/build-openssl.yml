@@ -175,9 +175,9 @@ jobs:
           if exist Makefile nmake clean
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
           if "${{ matrix.arch }}"=="arm64ec" (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC" || perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00" || perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
           )
           nmake
           nmake install_sw
@@ -203,7 +203,12 @@ jobs:
             export CROSS_SDK=iPhoneOS.sdk
           fi
           
-          ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-apps no-module no-tests $EXTRA_FLAGS
+          # Try with no-apps (3.2+), fallback to without no-apps (3.0/3.1)
+          if ! ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-apps no-module no-tests $EXTRA_FLAGS; then
+            echo "Fallback: 'no-apps' option unsupported. Retrying without it..."
+            ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-module no-tests $EXTRA_FLAGS
+          fi
+
           make -j$(nproc)
           
           mkdir -p ../_staging_static
