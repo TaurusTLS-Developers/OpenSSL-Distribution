@@ -147,13 +147,19 @@ jobs:
           
           if [ -z "$EXISTING_ISSUE" ]; then
             echo "Creating notification issue..."
+            
+            BODY=$(cat <<EOF
+          "A new draft release for **OpenSSL $VERSION** has been generated automatically.
+          
+          All artifacts have been successfully built and uploaded.
+          👉 [**Click here to review and publish the release**]($RELEASE_URL)"
+          
+          EOF
+          )
+
             gh issue create \
               --title "👀 Review Required: OpenSSL $TAG_NAME Draft Release" \
-              --body "A new draft release for **OpenSSL $VERSION** has been generated automatically.
-              
-              All artifacts have been successfully built and uploaded.
-              
-              👉 **[Click here to review and publish the release]($RELEASE_URL)**"
+              --body "$BODY"
           else
             echo "Notification issue already exists (#$EXISTING_ISSUE). Skipping."
           fi
