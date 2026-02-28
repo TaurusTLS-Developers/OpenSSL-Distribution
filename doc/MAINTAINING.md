@@ -8,27 +8,37 @@ The pipeline consists of three workflows:
 
 1.  **Check Upstream (`check-upstream.yml`):**
     *   Runs on a **Schedule** (Daily).
-    *   Polls the official OpenSSL repository for new tags (e.g., `openssl-3.3.1`).
+    *   Polls the official OpenSSL repository for new tags (e.g., `openssl-3.4.0`).
     *   If a new version is found that doesn't exist in our Releases, it triggers the **Build** workflow.
 
 2.  **Build (`build-openssl.yml`):**
     *   Can be triggered manually or by the Poller.
     *   Compiles OpenSSL for all target platforms in parallel.
-    *   Generates artifacts and uploads them to the GitHub Action run.
+    *   Generates a **Single Unified Package** (`.zip`) per platform containing shared libs, static libs, headers, and docs.
+    *   Uses a dedicated `build-metadata` artifact to pass the exact version string to the publishing workflow deterministically.
+    *   Uploads raw `.zip` archives using `actions/upload-artifact@v7` (`archive: false`) to prevent double-zipping by GitHub.
 
 3.  **Publish (`publish-release.yml`):**
-    *   Triggered automatically when a **Build** completes successfully.
-    *   Downloads the artifacts.
-    *   Performs a "Smoke Test" (executing `openssl version`) on Windows, Linux, and macOS to verify integrity.
-    *   Creates a **Draft Release** with the tag format `v.{version}` (e.g., `v.3.3.1`).
+    *   Triggered automatically when a **Build** completes successfully, or can be run manually.
+    *   Downloads the raw `.zip` artifacts using `actions/download-artifact@v8` (`skip-decompress: true`).
+    *   Reads the OpenSSL version from the `build-metadata` artifact.
+    *   Uses the GitHub CLI (`gh release`) to safely create or update the release and upload the artifacts (`--clobber`).
+    *   If triggered automatically from a non-default branch, it appends the branch name to the release tag (e.g., `v3.4.0-build-update`) for easy testing.
 
 ## 🛠️ Manual Operations
 
 ### How to build a specific version manually
 1.  Go to **Actions** tab -> **Build OpenSSL 3.x**.
 2.  Click **Run workflow**.
-3.  Enter the version (e.g., `3.3.0`).
-4.  The pipeline will build and create a Draft Release automatically.
+3.  Enter the version (e.g., `3.4.0`).
+4.  The pipeline will build the artifacts.
+
+### How to publish a release manually
+If an automatic publish fails, or you want to publish a specific build run:
+1.  Go to **Actions** tab -> **Publish Release**.
+2.  Click **Run workflow**.
+3.  Provide the **Build Workflow Run ID** (found in the URL of the successful build run).
+4.  Optionally provide a custom tag name and toggle the Draft status.
 
 ### How to backfill multiple missing versions
 1.  Go to **Actions** tab -> **Bulk Build Missing Releases**.
