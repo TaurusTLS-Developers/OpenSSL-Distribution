@@ -145,7 +145,7 @@ jobs:
           # Check if an issue already exists for this release to avoid spamming on re-runs
           EXISTING_ISSUE=$(gh issue list --search "in:title Review Required: OpenSSL $TAG_NAME" --json number -q '.[0].number')
           
-          if[ -z "$EXISTING_ISSUE" ]; then
+          if [ -z "$EXISTING_ISSUE" ]; then
             echo "Creating notification issue..."
             gh issue create \
               --title "👀 Review Required: OpenSSL $TAG_NAME Draft Release" \
