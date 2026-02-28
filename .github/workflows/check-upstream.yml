@@ -2,7 +2,7 @@ name: Check Upstream OpenSSL
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
   workflow_dispatch:
 
 permissions:
@@ -16,45 +16,43 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Check for New OpenSSL Release
-        id: check_version
-        env:
-          # Use PAT for API calls to avoid rate limits and ensure scope
-          GH_TOKEN: ${{ secrets.RBPW_PAT }}
+      - name: Fetch Active OpenSSL Versions
+        id: fetch_versions
         run: |
-          echo "Fetching latest OpenSSL 3.x release..."
+          echo "Fetching active OpenSSL versions from endoflife.date API..."
+          CURRENT_DATE=$(date +%Y-%m-%d)
           
-          # 1. Get upstream tag
-          LATEST_UPSTREAM=$(gh api repos/openssl/openssl/releases --jq 'map(select(.tag_name | startswith("openssl-3."))) | .[0].tag_name')
+          # Fetch all active 'latest' versions (where EOL date is greater than today, or EOL is false)
+          # We also filter to only include 3.x versions
+          ACTIVE_VERSIONS=$(curl -s https://endoflife.date/api/openssl.json | jq -r --arg now "$CURRENT_DATE" 'map(select((.eol == false or .eol > $now) and (.cycle | startswith("3.")))) | .[].latest')
           
-          if [ -z "$LATEST_UPSTREAM" ] || [ "$LATEST_UPSTREAM" == "null" ]; then
-            echo "::error::Could not fetch upstream version."
-            exit 1
+          if [ -z "$ACTIVE_VERSIONS" ]; then
+            echo "::info::No new OpenSSL Releases identified."
+            exit 0
           fi
           
-          CLEAN_VERSION=${LATEST_UPSTREAM#openssl-}
-          echo "Latest Upstream Version: $CLEAN_VERSION"
+          # Convert multi-line string to a space-separated string for easier looping
+          ACTIVE_VERSIONS_FLAT=$(echo "$ACTIVE_VERSIONS" | tr '\n' ' ')
+          echo "Active OpenSSL versions: $ACTIVE_VERSIONS_FLAT"
           
-          # 2. Check local releases
-          LOCAL_MATCH=$(gh release list --limit 10 | grep "$CLEAN_VERSION" || true)
-          
-          if [ -n "$LOCAL_MATCH" ]; then
-            echo "We already have a release for $CLEAN_VERSION. Nothing to do."
-            echo "trigger_build=false" >> $GITHUB_OUTPUT
-          else
-            echo "New version detected ($CLEAN_VERSION)! Preparing to trigger build."
-            echo "trigger_build=true" >> $GITHUB_OUTPUT
-            echo "new_version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
-          fi
+          echo "versions=$ACTIVE_VERSIONS_FLAT" >> $GITHUB_OUTPUT
 
-      - name: Trigger Build Workflow
-        if: steps.check_version.outputs.trigger_build == 'true'
+      - name: Check Local Releases and Trigger Builds
         env:
-          # MUST use PAT to ensure the triggered build can trigger the Release workflow later
           GH_TOKEN: ${{ secrets.RBPW_PAT }}
         run: |
-          echo "Triggering 'Build OpenSSL 3.x' workflow for version ${{ steps.check_version.outputs.new_version }}..."
+          VERSIONS="${{ steps.fetch_versions.outputs.versions }}"
           
-          gh workflow run build-openssl.yml -f version="${{ steps.check_version.outputs.new_version }}"
-          
-          echo "✅ Build triggered successfully."
+          for VERSION in $VERSIONS; do
+            echo "----------------------------------------"
+            echo "Checking version: $VERSION"
+            
+            # Check if we already have a release for this exact version
+            if gh release view "v$VERSION" > /dev/null 2>&1; then
+              echo "✅ Release v$VERSION already exists. Skipping."
+            else
+              echo "🚀 New release v$VERSION missing! Triggering build..."
+              gh workflow run build-openssl.yml -f version="$VERSION"
+              echo "Build triggered for $VERSION."
+            fi
+          done

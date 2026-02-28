@@ -8,12 +8,52 @@ on:
         description: 'OpenSSL Version (e.g. 3.4.0)'
         required: true
         default: '3.4.0'
-
+      ignore_eol:
+        description: 'Ignore EOL Status (Force Build)'
+        type: boolean
+        default: false
 jobs:
   prepare-metadata:
     name: Prepare Build Metadata
     runs-on: ubuntu-latest
     steps:
+      - name: Check EOL Status
+        run: |
+          VERSION="${{ inputs.version }}"
+          IGNORE_EOL="${{ inputs.ignore_eol }}"
+          
+          # Extract minor version cycle (e.g., 3.4.0 -> 3.4)
+          CYCLE=$(echo "$VERSION" | cut -d. -f1,2)
+          
+          echo "Checking EOL status for OpenSSL $CYCLE..."
+          API_RESPONSE=$(curl -s https://endoflife.date/api/openssl/${CYCLE}.json)
+          
+          # Check if the API returned an error (e.g., cycle doesn't exist)
+          if echo "$API_RESPONSE" | grep -q "message"; then
+            echo "Warning: Cycle $CYCLE not found in endoflife.date API. Assuming active."
+          else
+            EOL_DATE=$(echo "$API_RESPONSE" | jq -r '.eol')
+            
+            # If EOL_DATE is not false and not null, we check it against today
+            if [ "$EOL_DATE" != "false" ] &&[ "$EOL_DATE" != "null" ]; then
+              CURRENT_DATE=$(date +%Y-%m-%d)
+              if [[ "$EOL_DATE" < "$CURRENT_DATE" ]] || [[ "$EOL_DATE" == "$CURRENT_DATE" ]]; then
+                echo "❌ Warning: OpenSSL $CYCLE reached EOL on $EOL_DATE."
+                
+                if [ "$IGNORE_EOL" == "true" ]; then
+                  echo "⚠️ ignore_eol is set to true. Proceeding with build anyway."
+                else
+                  echo "Aborting build to prevent distribution of unsupported versions."
+                  exit 1
+                fi
+              else
+                echo "✅ OpenSSL $CYCLE is active (EOL: $EOL_DATE)."
+              fi
+            else
+              echo "✅ OpenSSL $CYCLE is active (No EOL date set)."
+            fi
+          fi
+
       - name: Save Version Info
         run: echo "${{ inputs.version }}" > version.txt
       
@@ -22,7 +62,7 @@ jobs:
         with:
           name: build-metadata
           path: version.txt
-          retention-days: 1 # Only needed temporarily for the publish workflow
+          retention-days: 7
 
   build:
     needs: prepare-metadata # Ensures metadata is ready before builds start
@@ -418,3 +458,4 @@ jobs:
           name: openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}
           path: ${{ env.ARCHIVE_FILE }}
           archive: false
+          retention-days: 7

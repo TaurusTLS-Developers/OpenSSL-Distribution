@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   publish:
@@ -130,3 +131,29 @@ jobs:
           # The --clobber flag overwrites existing files with the same name safely
           echo "Uploading artifacts to $TAG_NAME..."
           gh release upload "$TAG_NAME" artifacts/openssl-*.zip --clobber
+
+      - name: Notify Maintainers (Create Issue)
+        if: env.IS_DRAFT == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.config.outputs.version }}
+          TAG_NAME: ${{ steps.config.outputs.tag_name }}
+        run: |
+          # Get the direct URL to the draft release
+          RELEASE_URL=$(gh release view "$TAG_NAME" --json url -q .url)
+          
+          # Check if an issue already exists for this release to avoid spamming on re-runs
+          EXISTING_ISSUE=$(gh issue list --search "in:title Review Required: OpenSSL $TAG_NAME" --json number -q '.[0].number')
+          
+          if[ -z "$EXISTING_ISSUE" ]; then
+            echo "Creating notification issue..."
+            gh issue create \
+              --title "👀 Review Required: OpenSSL $TAG_NAME Draft Release" \
+              --body "A new draft release for **OpenSSL $VERSION** has been generated automatically.
+              
+              All artifacts have been successfully built and uploaded.
+              
+              👉 **[Click here to review and publish the release]($RELEASE_URL)**"
+          else
+            echo "Notification issue already exists (#$EXISTING_ISSUE). Skipping."
+          fi
