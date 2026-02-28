@@ -132,7 +132,7 @@ jobs:
           if "${{ matrix.arch }}"=="arm64ec" (
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests -D_WIN32_WINNT=0x0A00
           )
           nmake
           nmake install_sw
@@ -165,7 +165,7 @@ jobs:
           cp -r ../_staging/usr/local/* ../dist/shared/
 
       # ------------------------------------------------------------------------
-      # STATIC BUILD (Added no-apps and no-module to prevent compilation errors)
+      # STATIC BUILD
       # ------------------------------------------------------------------------
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
@@ -177,7 +177,7 @@ jobs:
           if "${{ matrix.arch }}"=="arm64ec" (
             perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC" || perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
           ) else (
-            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00" || perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests /MD -D_WIN32_WINNT=0x0A00 || perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-module no-tests /MD -D_WIN32_WINNT=0x0A00
           )
           nmake
           nmake install_sw
