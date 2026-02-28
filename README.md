@@ -80,7 +80,7 @@ $ sh ./install_symlinks.sh
 
 | Platform | Architecture | Linkage | Notes |
 | :--- | :--- | :--- | :--- |
-| **Windows** | x86, x64, ARM64EC | Shared & Static | Built for `Windows 10`/`Windows Server 2016` and higher.<br/>ARM64EC builds are **strictly experimental** as OpenSSL does not support this platform yet.<br/> __See[OpenSSL Issue #16482](https://github.com/openssl/openssl/issues/16482) for additional details__  |
+| **Windows** | x86, x64, ARM64EC | Shared & Static | Built for `Windows 10`/`Windows Server 2016` and higher.<br/>ARM64EC build is **strictly experimental** as OpenSSL does not support this platform yet.<br/> __See[OpenSSL Issue #16482](https://github.com/openssl/openssl/issues/16482) for additional details__  |
 | **Linux** | x64, ARM64 | Shared & Static | Built on Ubuntu, compatible with glibc distros. SCTP enabled. |
 | **macOS** | x64 (Intel), ARM64 | Shared & Static | Universal support for modern macOS. |
 | **Android** | ARM64, x64 | Shared & Static | Built against recent NDK. |
