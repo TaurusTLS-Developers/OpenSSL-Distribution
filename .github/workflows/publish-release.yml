@@ -7,10 +7,6 @@ on:
       run_id:
         description: 'Build Workflow Run ID'
         required: true
-      tag_name:
-        description: 'Release Tag (e.g. v3.3.0)'
-        required: false
-        default: 'auto'
       is_draft:
         description: 'Create as Draft'
         type: boolean
@@ -28,150 +24,95 @@ permissions:
   contents: write
 
 jobs:
-  # ============================================================================
-  # JOB 1: VERIFICATION (The Stub)
-  # Runs on 3 OSs to verify the binaries before releasing
-  # ============================================================================
-  verify_binaries:
-    name: Verify ${{ matrix.os }}
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
-
-    steps:
-      - name: Determine Run ID
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
-          else
-            echo "TARGET_RUN_ID=${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
-          fi
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ env.TARGET_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: verify_staging
-
-      # ------------------------------------------------------------------------
-      # STUB TEST: This is where we will add the TaurusTLS tool later
-      # ------------------------------------------------------------------------
-      - name: Run Compatibility Check (Stub)
-        shell: bash
-        run: |
-          echo "======================================================="
-          echo "Running Compatibility Tests on ${{ matrix.os }}..."
-          echo "======================================================="
-          
-          # 1. Locate the correct artifact for this OS (Simple Find)
-          # In the future, we will extract the specific archive for this OS
-          
-          echo "Locating artifacts..."
-          find verify_staging -name "*.zip" -o -name "*.tar.gz"
-          
-          echo ""
-          echo "[STUB] Executing TaurusCheck..."
-          echo "[STUB] Loading Libraries..."
-          echo "[STUB] Verifying Symbols..."
-          
-          # Force Success for now
-          echo ">>> TEST PASSED (Stub)"
-          exit 0
-
-  # ============================================================================
-  # JOB 2: CREATE RELEASE
-  # Only runs if 'verify_binaries' succeeds
-  # ============================================================================
-  create_release:
-    name: Create Draft Release
-    needs: verify_binaries
+  publish:
+    name: Publish to GitHub Releases
+    # Run if triggered manually, OR if triggered automatically and the build succeeded
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+
     steps:
+      - name: Determine Target Run ID & Settings
+        id: run_info
+        run: |
+          echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
+          echo "IS_DRAFT=${{ inputs.is_draft }}" >> $GITHUB_ENV
+
       - name: Checkout Repo
         uses: actions/checkout@v4
-
-      - name: Determine Run ID
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "TARGET_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
-          else
-            echo "TARGET_RUN_ID=${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
-          fi
-
-      - name: Download Artifacts
+        
+      - name: Download Build Metadata
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ env.TARGET_RUN_ID }}
+          name: build-metadata
+          path: metadata/
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: release_staging
 
-      - name: Stage Assets & Detect Version
+      - name: Download Release Archives
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ env.TARGET_RUN_ID }}
+          pattern: openssl-*
+          path: artifacts/
+          merge-multiple: true
+          skip-decompress: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Version & Configure Release
+        id: config
+        shell: bash
         run: |
-          mkdir -p assets
-          find release_staging -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec mv {} assets/ \;
+          if [ ! -f "metadata/version.txt" ]; then
+            echo "Error: metadata/version.txt not found!"
+            exit 1
+          fi
           
-          # Detect Version from filename (e.g. openssl-3.3.0-Windows...)
-          SAMPLE_FILE=$(ls assets | head -n 1)
-          if [[ "$SAMPLE_FILE" =~ openssl-([^-]+)- ]]; then
-             DETECTED_VER="${BASH_REMATCH[1]}"
-             echo "OPENSSL_VERSION=$DETECTED_VER" >> $GITHUB_ENV
+          # Read the version from the artifact (xargs trims any accidental whitespace/newlines)
+          VERSION=$(cat metadata/version.txt | xargs)
+          echo "Detected OpenSSL Version: $VERSION"
+          
+          # Determine Release Suffix
+          BRANCH="${{ github.ref_name }}"
+          if [[ "$BRANCH" != "${{ github.event.repository.default_branch }}" ]]
+          then
+            SUFFIX="-$BRANCH"
           else
-             echo "OPENSSL_VERSION=Unknown" >> $GITHUB_ENV
+            SUFFIX=""
           fi
+          
+          # Determine Tag Name
+          TAG_NAME="v.$VERSION$SUFFIX"
+          echo "Target Tag: $TAG_NAME"
 
-      - name: Determine Tag
-        run: |
-          # Check if user provided a specific tag in manual dispatch
-          if [ "${{ inputs.tag_name }}" != "" ] && [ "${{ inputs.tag_name }}" != "auto" ]; then
-            echo "RELEASE_TAG=${{ inputs.tag_name }}" >> $GITHUB_ENV
-          else
-            # NEW FORMAT: v.{version} (e.g., v.3.3.1)
-            # We assume OPENSSL_VERSION was detected in the previous step
-            echo "RELEASE_TAG=v.${{ env.OPENSSL_VERSION }}" >> $GITHUB_ENV
-          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Create or Update Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.config.outputs.version }}
+          TAG_NAME: ${{ steps.config.outputs.tag_name }}
         run: |
-          TITLE="OpenSSL Distribution ${{ env.OPENSSL_VERSION }}"
-          TAG="${{ env.RELEASE_TAG }}"
-          
-          echo "Target Tag: $TAG"
-          
-          # 1. Check if release exists
-          if gh release view "$TAG" > /dev/null 2>&1; then
-             echo "✅ Release '$TAG' already exists. Switching to Update mode."
-             
-             # Optional: Update the notes/title to reflect the new build ID
-             # We assume we want to keep it as Draft/Prerelease if it was one, 
-             # or just update metadata.
-             gh release edit "$TAG" \
-               --title "$TITLE" \
-               --notes "Automated build from Run ${{ env.TARGET_RUN_ID }} (Updated)." \
-               --draft \
-               --prerelease
+          # 1. Check if the release already exists
+          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists. Proceeding to update artifacts..."
           else
-             echo "🆕 Release '$TAG' does not exist. Creating..."
-             
-             gh release create "$TAG" \
-               --draft \
-               --prerelease \
-               --title "$TITLE" \
-               --notes "Automated build from Run ${{ env.TARGET_RUN_ID }}."
+            echo "Release $TAG_NAME does not exist. Creating new release..."
+            
+            DRAFT_FLAG=""
+            if [ "$IS_DRAFT" == "true" ]; then
+              DRAFT_FLAG="--draft"
+            fi
+            
+            gh release create "$TAG_NAME" \
+              --title "OpenSSL Distribution $VERSION" \
+              --notes "Pre-compiled OpenSSL $VERSION binaries for multiple platforms." \
+              $DRAFT_FLAG
           fi
-
-      - name: Upload Assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: assets
-        run: |
-          for file in *; do
-            echo "Uploading $file..."
-            gh release upload "${{ env.RELEASE_TAG }}" "$file" --clobber
-          done
+          
+          # 2. Upload artifacts
+          # The --clobber flag overwrites existing files with the same name safely
+          echo "Uploading artifacts to $TAG_NAME..."
+          gh release upload "$TAG_NAME" artifacts/openssl-*.zip --clobber

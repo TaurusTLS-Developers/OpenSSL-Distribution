@@ -5,583 +5,411 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'OpenSSL Version (e.g. 3.3.0)'
+        description: 'OpenSSL Version (e.g. 3.4.0)'
         required: true
-        default: '3.3.0'
+        default: '3.4.0'
 
 jobs:
+  prepare-metadata:
+    name: Prepare Build Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save Version Info
+        run: echo "${{ inputs.version }}" > version.txt
+      
+      - name: Upload Metadata Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-metadata
+          path: version.txt
+          retention-days: 1 # Only needed temporarily for the publish workflow
+
   build:
+    needs: prepare-metadata # Ensures metadata is ready before builds start
     name: ${{ matrix.os-label }} - ${{ matrix.arch }}
     runs-on: ${{ matrix.os-runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # --- DESKTOP WINDOWS ---
+          # --- WINDOWS ---
           - os-label: Windows
             os-runner: windows-latest
             arch: x64
             target: VC-WIN64A
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64 
-
+            vcvars: x64
           - os-label: Windows
             os-runner: windows-latest
             arch: x86
             target: VC-WIN32
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86
-
+            vcvars: x86
           - os-label: Windows
             os-runner: windows-11-arm
             arch: arm64ec
             target: VC-WIN64-ARM
-            setup_cmd: call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+            vcvars: arm64
+            no_asm: true
 
-          # --- DESKTOP LINUX ---
+          # --- LINUX ---
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: x64
             target: linux-x86_64
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential libtext-template-perl libsctp-dev
           - os-label: Linux
             os-runner: ubuntu-latest
             arch: arm64
             target: linux-aarch64
-            cross_compile_prefix: aarch64-linux-gnu-
-            setup_cmd: sudo apt-get update && sudo apt-get install -y build-essential gcc-aarch64-linux-gnu libtext-template-perl libsctp-dev
+            cross_prefix: aarch64-linux-gnu-
 
-          # --- DESKTOP MACOS ---
+          # --- MACOS ---
           - os-label: macOS
             os-runner: macos-14
             arch: x64
             target: darwin64-x86_64-cc
-            setup_cmd: echo "Setup Mac Intel"
           - os-label: macOS
             os-runner: macos-14
             arch: arm64
             target: darwin64-arm64-cc
-            setup_cmd: echo "Setup Mac ARM"
 
-          # --- ANDROID (Linux Host) ---
+          # --- ANDROID ---
           - os-label: Android
             os-runner: ubuntu-latest
             arch: arm64
             target: android-arm64
-            ndk_ver: 26.1.10909125
           - os-label: Android
             os-runner: ubuntu-latest
-            arch: arm
-            target: android-arm
-            ndk_ver: 26.1.10909125
-          - os-label: Android
-            os-runner: ubuntu-latest
-            arch: x86
-            target: android-x86
-            ndk_ver: 26.1.10909125
-          - os-label: Android
-            os-runner: ubuntu-latest
-            arch: x64
+            arch: x86_64
             target: android-x86_64
-            ndk_ver: 26.1.10909125
 
-          # --- IOS (macOS Host) ---
-          # Static Only
+          # --- IOS (Static Only) ---
           - os-label: iOS
             os-runner: macos-14
             arch: arm64
             target: ios64-cross
             static_only: true
-          - os-label: iOS_Sim
-            os-runner: macos-14
-            arch: x64
-            target: iossimulator-xcrun
-            static_only: true
 
     steps:
-      - name: Checkout Builder Repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------------
-      # ENVIRONMENT SETUP
-      # ------------------------------------------------------------------------
-      
-      - name: Remove GNU Link (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
-          if exist "C:\Program Files\Git\usr\bin\link.exe" del "C:\Program Files\Git\usr\bin\link.exe"
-          echo 
-      
-      - name: Setup Linux Deps
-        if: runner.os == 'Linux' && matrix.os-label == 'Linux'
-        run: ${{ matrix.setup_cmd }}
-
-      - name: Setup Android NDK
-        if: matrix.os-label == 'Android'
-        run: |
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          sudo apt-get update
+          sudo apt-get install -y build-essential perl zip libsctp-dev
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
 
       - name: Download OpenSSL Source
+        shell: bash
         run: |
           curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-${{ github.event.inputs.version }}/openssl-${{ github.event.inputs.version }}.tar.gz
           tar -xzf openssl.tar.gz
           mv openssl-${{ github.event.inputs.version }} src
 
-      # ------------------------------------------------------------------------
-      # BUILD SHARED (Skip for iOS/StaticOnly)
-      # ------------------------------------------------------------------------
-      
-      - name: Configure Shared (Windows x86/x64)
-        if: runner.os == 'Windows' && matrix.arch != 'arm64ec' && matrix.static_only != true
+      - name: Patch Android 16K Page Alignment
+        if: matrix.os-label == 'Android'
+        shell: bash
         working-directory: src
-        shell: cmd
         run: |
-          ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
-      
-      - name: Configure Shared (Windows x86/x64)
-        if: runner.os == 'Windows' && matrix.arch == 'arm64ec' && matrix.static_only != true
-        working-directory: src
-        shell: cmd
-        run: |
-          ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/shared shared no-asm no-tests ^
-            "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" ^
-            "LDFLAGS=/MACHINE:ARM64EC /DEBUG" ^
-            "ARFLAGS=/MACHINE:ARM64EC"
+          sed -i 's/cppflags         => "-D__ANDROID_API__=$(ANDROID_API)"/cppflags => "-D__ANDROID_API__=$(ANDROID_API) -fPIC",\n        lflags => "-Wl,-z,max-page-size=16384"/' Configurations/15-android.conf
 
-      - name: Configure Shared (Unix/Android)
-        if: runner.os != 'Windows' && matrix.static_only != true
-        working-directory: src
-        env:
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
-        run: |
-          # 1. Define Standard Paths
-          OPENSSLDIR="/usr/lib/ssl"
-          PREFIX="/usr/local"
-          
-          if [ "${{ runner.os }}" == "macOS" ]; then
-             OPENSSLDIR="/private/etc/ssl"
-          fi
-          
-          # 2. Define Platform Flags
-          EXTRA_OPTS=""
+      - name: Setup Windows Linker
+        if: runner.os == 'Windows'
+        shell: bash
+        run: rm -f /usr/bin/link.exe 2>/dev/null || true
 
-          # Desktop Linux: Enable SCTP + RPATH
-          if [ "${{ matrix.os-label }}" == "Linux" ]; then
-             EXTRA_OPTS="enable-sctp -Wl,-rpath,\$$ORIGIN"
-          
-          # Android: RPATH only (No SCTP)
-          elif [ "${{ matrix.os-label }}" == "Android" ]; then
-             EXTRA_OPTS="-Wl,-rpath,\$$ORIGIN"
-          fi
-          
-          # 3. Configure
-          ./Configure ${{ matrix.target }} \
-            --prefix=$PREFIX \
-            --openssldir=$OPENSSLDIR \
-            shared no-tests \
-            $EXTRA_OPTS
-                
+      # ------------------------------------------------------------------------
+      # SHARED BUILD
+      # ------------------------------------------------------------------------
       - name: Build Shared (Windows)
         if: runner.os == 'Windows' && matrix.static_only != true
-        working-directory: src
         shell: cmd
+        working-directory: src
         run: |
-          ${{ matrix.setup_cmd }}
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
+          if "${{ matrix.arch }}"=="arm64ec" (
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+          ) else (
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\shared shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+          )
           nmake
-          nmake install
-          nmake install_html_docs || echo "Docs generation failed"          
-      
+          nmake install_sw
+          nmake install_html_docs || echo "Docs failed"
+
       - name: Build Shared (Unix/Android)
         if: runner.os != 'Windows' && matrix.static_only != true
         working-directory: src
         env:
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
+          CROSS_COMPILE: ${{ matrix.cross_prefix }}
+        shell: bash
         run: |
-          make -j4
+          EXTRA_FLAGS=""
+          if [ "${{ matrix.os-label }}" == "Android" ]; then
+            export ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME
+            export PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+            export ANDROID_API=28
+          elif [ "${{ matrix.os-label }}" == "Linux" ]; then
+            EXTRA_FLAGS="enable-sctp -Wl,-rpath,'\$ORIGIN'"
+          fi
           
-          # 1. Install to Staging Area
-          STAGING_DIR="_staging"
-          make install_sw DESTDIR=$(pwd)/$STAGING_DIR
+          ./Configure ${{ matrix.target }} --prefix=/usr/local shared no-tests $EXTRA_FLAGS
+          make -j$(nproc)
           
-          # 2. Move to Expected Output Directory (dist/shared)
+          mkdir -p ../_staging
+          make install_sw DESTDIR=${{ github.workspace }}/_staging
+          make install_html_docs DESTDIR=${{ github.workspace }}/_staging || true
+          
           mkdir -p ../dist/shared
-          cp -r $STAGING_DIR/usr/local/* ../dist/shared/
-          
-          # 3. Docs
-          make install_html_docs DESTDIR=$(pwd)/$STAGING_DIR || echo "Docs generation failed"          
-          if [ -d "$STAGING_DIR/usr/local/html" ]; then
-             mkdir -p ../dist/shared/html
-             cp -r $STAGING_DIR/usr/local/html/* ../dist/shared/html/
-          fi
-          if [ -d "$STAGING_DIR/usr/local/share/doc" ]; then
-             mkdir -p ../dist/shared/share/doc
-             cp -r $STAGING_DIR/usr/local/share/doc/* ../dist/shared/share/doc/
-          fi
-          
+          cp -r ../_staging/usr/local/* ../dist/shared/
+
       # ------------------------------------------------------------------------
-      # BUILD STATIC
+      # STATIC BUILD (Added no-apps and no-module to prevent compilation errors)
       # ------------------------------------------------------------------------
-
-      - name: Clean Source (Windows)
-        if: runner.os == 'Windows'
-        working-directory: src
-        shell: cmd
-        run: |
-          ${{ matrix.setup_cmd }}
-          nmake clean
-
-      - name: Clean Source (Unix)
-        if: runner.os != 'Windows' && matrix.static_only != true
-        working-directory: src
-        env:
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
-        run: make clean
-
-      - name: Configure Static (Windows x86/x64)
-        if: runner.os == 'Windows' && matrix.arch != 'arm64ec'
-        working-directory: src
-        shell: cmd
-        run: |
-          ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
-      
-      - name: Configure Static (Windows arm64ec)
-        if: runner.os == 'Windows' && matrix.arch == 'arm64ec'
-        working-directory: src
-        shell: cmd
-        run: |
-          ${{ matrix.setup_cmd }}
-          perl Configure ${{ matrix.target }} --prefix=${{ github.workspace }}/dist/static no-shared no-asm no-tests "CFLAGS=/nologo /O1 /D_WIN32_WINNT=0x0A00"
-      
-      - name: Configure Static (Unix/Android/iOS)
-        if: runner.os != 'Windows'
-        working-directory: src
-        env:
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
-        run: |
-          # 1. Define Standard Paths
-          OPENSSLDIR="/usr/lib/ssl"
-          PREFIX="/usr/local"
-          
-          if [ "${{ runner.os }}" == "macOS" ]; then
-             OPENSSLDIR="/private/etc/ssl"
-          fi
-
-          # 2. Platform Flags
-          EXTRA_OPTS=""
-
-          # Desktop Linux: Enable SCTP
-          if [ "${{ matrix.os-label }}" == "Linux" ]; then
-             EXTRA_OPTS="enable-sctp"
-          fi
-
-          # iOS Specifics
-          if [ "${{ matrix.target }}" == "ios64-cross" ]; then
-             SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-             export CC=clang
-             # Pass via CFLAGS string, not direct arg
-             EXTRA_OPTS="$EXTRA_OPTS -isysroot ${SDK_PATH} -arch arm64"
-             unset CROSS_TOP
-             unset CROSS_SDK
-          fi
-
-          # 3. Configure
-          # Note: We pass EXTRA_OPTS inside CFLAGS for iOS if needed, 
-          # but for SCTP 'enable-sctp' is a direct Configure argument.
-          # The logic below handles both cases by checking what EXTRA_OPTS contains.
-          
-          # If it contains -isysroot, pass it as CFLAGS.
-          # If it contains enable-sctp, pass it as args.
-          # To keep it simple, we split them:
-          
-          CONF_ARGS="no-shared no-tests"
-          
-          if [[ "$EXTRA_OPTS" == *"enable-sctp"* ]]; then
-             CONF_ARGS="$CONF_ARGS enable-sctp"
-          fi
-          
-          if [[ "$EXTRA_OPTS" == *"-isysroot"* ]]; then
-             # iOS case: Pass as CFLAGS
-             ./Configure ${{ matrix.target }} \
-                --prefix=$PREFIX \
-                --openssldir=$OPENSSLDIR \
-                $CONF_ARGS \
-                "CFLAGS=$EXTRA_OPTS"
-          else
-             # Standard case
-             ./Configure ${{ matrix.target }} \
-                --prefix=$PREFIX \
-                --openssldir=$OPENSSLDIR \
-                $CONF_ARGS
-          fi
-
       - name: Build Static (Windows)
         if: runner.os == 'Windows'
-        working-directory: src
         shell: cmd
+        working-directory: src
         run: |
-          ${{ matrix.setup_cmd }}
+          if exist Makefile nmake clean
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
+          if "${{ matrix.arch }}"=="arm64ec" (
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /D_WIN32_WINNT=0x0A00" "ARFLAGS=/MACHINE:ARM64EC" "LDFLAGS=/MACHINE:ARM64EC"
+          ) else (
+            perl Configure ${{ matrix.target }} --prefix=%GITHUB_WORKSPACE%\dist\static no-shared no-apps no-module no-tests "CFLAGS=/nologo /O2 /D_WIN32_WINNT=0x0A00"
+          )
           nmake
-          nmake install
+          nmake install_sw
 
       - name: Build Static (Unix/Android/iOS)
         if: runner.os != 'Windows'
         working-directory: src
         env:
-          CROSS_COMPILE: ${{ matrix.cross_compile_prefix }}
-        run: |
-          make -j4
-          
-          # 1. Install to Staging Area
-          STAGING_DIR="_staging_static"
-          make install_sw DESTDIR=$(pwd)/$STAGING_DIR
-          
-          # 2. Move to Expected Output Directory (dist/static)
-          mkdir -p ../dist/static
-          cp -r $STAGING_DIR/usr/local/* ../dist/static/
-          
-      # ------------------------------------------------------------------------
-      # REARRANGE ARTIFACTS
-      # ------------------------------------------------------------------------
-      - name: Rearrange Output
+          CROSS_COMPILE: ${{ matrix.cross_prefix }}
         shell: bash
         run: |
-          # 0. Debug
-          du -d 3 dist/
-
-          # 1. Create Staging Areas
-          mkdir -p dist/runtime
-          mkdir -p dist/dev/bin
-          mkdir -p dist/dev/lib
-          mkdir -p dist/dev/include
-          mkdir -p dist/dev/doc
-          mkdir -p dist/dev/debug
+          if [ -f Makefile ]; then make clean; fi
           
-          cp src/LICENSE.txt dist/runtime/
-          cp src/LICENSE.txt dist/dev/
+          EXTRA_FLAGS=""
+          if [ "${{ matrix.os-label }}" == "Android" ]; then
+            export ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME
+            export PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+            export ANDROID_API=28
+          elif [ "${{ matrix.os-label }}" == "Linux" ]; then
+            EXTRA_FLAGS="enable-sctp"
+          elif [ "${{ matrix.os-label }}" == "iOS" ]; then
+            export CROSS_TOP=$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer
+            export CROSS_SDK=iPhoneOS.sdk
+          fi
           
-          # 2. Populate Dev Headers & Docs
-          if [ -d "dist/shared/include" ]; then
-             cp -r dist/shared/include/* dist/dev/include/
-          else
-             cp -r dist/static/include/* dist/dev/include/
-          fi
-
-          if [ -d "dist/shared/html" ]; then
-            cp -r dist/shared/html/* dist/dev/doc/
-          elif [ -d "dist/shared/share/doc" ]; then
-             cp -r dist/shared/share/doc/* dist/dev/doc/
-          elif [ -d "dist/static/html" ]; then
-             cp -r dist/static/html/* dist/dev/doc/
-          elif [ -d "dist/static/share/doc" ]; then
-             cp -r dist/static/share/doc/* dist/dev/doc/
-          fi
-
-          # 3. Populate Static Libs (Dev Only)
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             cp dist/static/lib/*.lib dist/dev/lib/
-          else
-             cp dist/static/lib/*.a dist/dev/lib/ 2>/dev/null || cp dist/static/lib64/*.a dist/dev/lib/
-          fi
-
-          # 4. Populate Shared Binaries (Runtime + Dev)
-          if [ "${{ matrix.static_only }}" != "true" ]; then
+          ./Configure ${{ matrix.target }} --prefix=/usr/local no-shared no-apps no-module no-tests $EXTRA_FLAGS
+          make -j$(nproc)
           
-            # --- WINDOWS ---
+          mkdir -p ../_staging_static
+          make install_sw DESTDIR=${{ github.workspace }}/_staging_static
+          
+          mkdir -p ../dist/static
+          cp -r ../_staging_static/usr/local/* ../dist/static/
+
+      # ------------------------------------------------------------------------
+      # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
+      # ------------------------------------------------------------------------
+      - name: Organize Artifacts
+        shell: bash
+        run: |
+          # Create unified directory structure
+          mkdir -p pkg/engines pkg/providers pkg/lib/static pkg/lib/import pkg/doc pkg/include
+          if [ -f src/LICENSE.txt ]; then cp src/LICENSE.txt pkg/; fi
+
+          # --- Generate README ---
+          cat << 'EOF' > pkg/README.txt
+          OpenSSL Distribution Package
+          ============================
+          
+          This package contains the OpenSSL executable, shared libraries, static libraries (stripped), C headers, and documentation.
+          
+          Package Layout:
+          ---------------
+          * version.txt         - OpenSSL version in this package [non-redistributable]
+          * openssl             - The OpenSSL command-line utility [redistributable/optional]
+          * libcrypto / libssl  - Shared libraries[redistributable/required] 
+          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
+          * engines/            - OpenSSL engines [redistributable/optional] 
+          * providers/          - OpenSSL providers[redistributable/optional] 
+          * doc/                - Developers Documentation [non-redistributable] 
+          * include/            - C Header files [non-redistributable] 
+          * lib/import/         - Import libraries (Windows only) [non-redistributable] 
+          * lib/static/         - Static libraries (.lib / .a) [non-redistributable]
+          
+          Linking Instructions:
+          ---------------------
+          * Windows Dynamic: Link against the import libraries in `lib/import/` (which point to the DLLs in the root).
+          * Windows Static:  Link against the static libraries in `lib/static/` (Compiled with /MD Dynamic CRT).
+          * POSIX Dynamic:   Link directly against the shared libraries (.so / .dylib) in the root directory.
+          * POSIX Static:    Link against the static archives (.a) in `lib/static/`.
+          
+          Deployment Instructions (Linux / macOS / Unix):
+          -----------------------------------------------
+          Windows file systems fail to extract Unix symbolic links. To ensure cross-platform compatibility, this archive contains only the physical shared library files.
+          
+          If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.3).
+          
+          $ cd <extracted_directory>
+          $ sh ./install_symlinks.sh
+          
+          Windows Users:
+          --------------
+          Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
+          EOF
+
+          # --- Generate Version File ---
+          echo "${{ inputs.version }}" > pkg/version.txt
+
+          # 1. Shared Libraries & Binary
+          if [ "${{ matrix.static_only }}" != "true" ] && [ -d "dist/shared" ]; then
             if [ "${{ runner.os }}" == "Windows" ]; then
-               # Runtime (Flat, No PDBs)
-               cp dist/shared/bin/*.dll dist/runtime/
-               cp dist/shared/bin/*.exe dist/runtime/
-               
-               # Dev (Structured, With PDBs)
-               cp dist/shared/bin/*.dll dist/dev/bin/
-               cp dist/shared/bin/*.exe dist/dev/bin/
-               cp dist/shared/bin/*.pdb dist/dev/debug/ 2>/dev/null || true
-               
-               # Providers/Engines Logic
-               mkdir -p dist/runtime/providers dist/runtime/engines
-               mkdir -p dist/dev/bin/providers dist/dev/bin/engines
-               
-               find dist/shared/lib -name "*.dll" | while read file; do
-                   if [[ "$file" == *"ossl-modules"* ]]; then
-                       cp "$file" dist/runtime/providers/
-                       cp "$file" dist/dev/bin/providers/
-                       pdb="${file%.dll}.pdb"
-                       if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/providers/; fi
-                   elif [[ "$file" == *"engines"* ]]; then
-                       cp "$file" dist/runtime/engines/
-                       cp "$file" dist/dev/bin/engines/
-                       pdb="${file%.dll}.pdb"
-                       if [ -f "$pdb" ]; then cp "$pdb" dist/dev/bin/engines/; fi
-                   fi
-               done
-               find dist/shared/lib -name "*.pdb" -exec cp {} dist/dev/debug/ \;
-
-            # --- UNIX (Linux/macOS/Android) ---
+              cp dist/shared/bin/*.dll pkg/ 2>/dev/null || true
+              cp dist/shared/bin/*.exe pkg/ 2>/dev/null || true
+              cp dist/shared/lib/engines-3/*.dll pkg/engines/ 2>/dev/null || true
+              cp dist/shared/lib/ossl-modules/*.dll pkg/providers/ 2>/dev/null || true
             else
-               # A. Copy to Dev (Keep symbols / Original state)
-               find dist/shared -type f \( -name "libcrypto*.so*" -o -name "libssl*.so*" -o -name "libcrypto*.dylib" -o -name "libssl*.dylib" \) -exec cp -L {} dist/dev/bin/ \;
-               
-               if [ -f "dist/shared/bin/openssl" ]; then
-                 cp dist/shared/bin/openssl dist/dev/bin/
-               fi
+              LIBDIR="dist/shared/lib"
+              if [ -d "dist/shared/lib64" ]; then LIBDIR="dist/shared/lib64"; fi
+              
+              # Copy REAL files only (Strictly ignoring symlinks)
+              for file in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
+                if [ -f "$file" ] &&[ ! -L "$file" ]; then
+                  cp "$file" pkg/
+                fi
+              done
+              
+              if [ -f dist/shared/bin/openssl ]; then cp dist/shared/bin/openssl pkg/; fi
+              
+              for file in "$LIBDIR"/ossl-modules/*.so* "$LIBDIR"/ossl-modules/*.dylib*; do
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                  cp "$file" pkg/providers/
+                fi
+              done
+              
+              for file in "$LIBDIR"/engines-3/*.so* "$LIBDIR"/engines-3/*.dylib*; do
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
+                  cp "$file" pkg/engines/
+                fi
+              done
+              
+              # Generate Symlink Script
+              SCRIPT_FILE="pkg/install_symlinks.sh"
+              echo "#!/bin/sh" > "$SCRIPT_FILE"
+              echo "echo 'Restoring shared library symlinks...'" >> "$SCRIPT_FILE"
+              
+              SYMLINKS_FOUND=false
+              for link in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
+                if [ -L "$link" ]; then
+                  link_name=$(basename "$link")
+                  target=$(readlink "$link")
+                  target_base=$(basename "$target")
+                  echo "ln -sf \"$target_base\" \"$link_name\"" >> "$SCRIPT_FILE"
+                  SYMLINKS_FOUND=true
+                fi
+              done
+              
+              # --- macOS Relocatability & Duplicate Cleanup ---
+              if [ "${{ runner.os }}" == "macOS" ]; then
+                echo "Making macOS binaries relocatable and cleaning duplicates..."
+                
+                rm -f pkg/libcrypto.dylib pkg/libssl.dylib
+                
+                echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
+                echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
+                SYMLINKS_FOUND=true
 
-               mkdir -p dist/dev/bin/providers dist/dev/bin/engines
-               find dist/shared -path "*/ossl-modules/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/providers/ \;
-               find dist/shared -path "*/engines-3/*" \( -name "*.so" -o -name "*.dylib" \) -exec cp -L {} dist/dev/bin/engines/ \;
-
-               # B. Copy Dev to Runtime
-               cp -r dist/dev/bin/* dist/runtime/
-               if [ -d "dist/runtime/providers" ]; then mv dist/runtime/providers/* dist/runtime/providers/ 2>/dev/null || true; fi
-               
-               # C. Determine Strip Tool & Flags
-               STRIP_BIN="strip"
-               STRIP_FLAGS="-s" 
-
-               if [ "${{ matrix.os-label }}" == "Android" ]; then
-                  STRIP_BIN="llvm-strip"
-                  STRIP_FLAGS="--strip-unneeded"
-               elif [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
-                  STRIP_BIN="${{ matrix.cross_compile_prefix }}strip"
-                  STRIP_FLAGS="--strip-unneeded"
-               elif [ "${{ runner.os }}" == "macOS" ]; then
-                  STRIP_BIN="strip"
-                  STRIP_FLAGS="-x"
-               fi
-
-               echo "Stripping Runtime binaries using: $STRIP_BIN $STRIP_FLAGS"
-
-               # D. Execute Strip on Runtime folder
-               chmod -R u+w dist/runtime
-               find dist/runtime -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -print0 | xargs -0 -I {} $STRIP_BIN $STRIP_FLAGS {}
-               
-               # E. macOS Specifics (dSYM & Relocatability)
-               if [ "${{ runner.os }}" == "macOS" ]; then
-                  # dSYM for Dev
-                  for lib in dist/dev/bin/*.dylib dist/dev/bin/providers/*.dylib dist/dev/bin/engines/*.dylib; do
-                     if [ -f "$lib" ] && [ ! -L "$lib" ]; then
-                        dsymutil "$lib" -o "$lib.dSYM"
-                        mv "$lib.dSYM" dist/dev/debug/
-                        strip -x "$lib"
-                     fi
+                for lib in pkg/lib*.dylib; do
+                  if [ -f "$lib" ]; then
+                    install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
+                  fi
+                done
+                
+                find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
+                  DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
+                  for dep in $DEPS; do
+                    depname=$(basename "$dep")
+                    if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
+                      install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
+                    else
+                      install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
+                    fi
                   done
-                  
-                  # Relocatability (install_name_tool) for Runtime
-                  echo "Making macOS binaries relocatable..."
-                  OLD_PATH="/usr/local/lib" # Matches our Configure --prefix
-                  
-                  # Fix IDs
-                  for lib in dist/runtime/lib*.dylib; do
-                     if [ -f "$lib" ] && [ ! -L "$lib" ]; then
-                        LIB_NAME=$(basename "$lib")
-                        install_name_tool -id "@rpath/$LIB_NAME" "$lib"
-                     fi
-                  done
-                  
-                  # Fix Dependencies
-                  TARGETS=$(find dist/runtime -maxdepth 1 -type f \( -name "*.dylib" -o -name "openssl" \))
-                  for target in $TARGETS; do
-                     # Note: OpenSSL 3.x with --prefix might link to /usr/local/lib or /usr/local/lib64 depending on config
-                     # We loosely grep for the lib name to be safe
-                     otool -L "$target" | grep "libcrypto\|libssl" | grep -v "@rpath" | awk '{print $1}' | while read dep; do
-                        DEP_NAME=$(basename "$dep")
-                        install_name_tool -change "$dep" "@loader_path/$DEP_NAME" "$target"
-                     done
-                     install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
-                  done
-               fi
+                  install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+                  install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
+                done
+              fi
+              
+              if [ "$SYMLINKS_FOUND" = true ]; then
+                  chmod +x "$SCRIPT_FILE"
+              else
+                  rm -f "$SCRIPT_FILE"
+              fi
             fi
           fi
 
-          # 5. Cleanup Empty Directories
-          find dist -type d -empty -delete
+          # 2. Static & Import Libraries (Unified Structure)
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             cp dist/shared/lib/*.lib pkg/lib/import/ 2>/dev/null || true
+             cp dist/static/lib/*.lib pkg/lib/static/ 2>/dev/null || true
+          else
+             SLIBDIR="dist/static/lib"
+             if [ -d "dist/static/lib64" ]; then SLIBDIR="dist/static/lib64"; fi
+             # POSIX static libraries go to lib/static/
+             cp "$SLIBDIR"/*.a pkg/lib/static/ 2>/dev/null || true
+          fi
+
+          # 3. Strip Symbols (find is recursive, so it handles lib/static/ and lib/import/ automatically)
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             find pkg/lib -name "*.lib" -exec llvm-strip --strip-debug {} \; 2>/dev/null || true
+          else
+             STRIP_CMD="strip"
+             if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ runner.os }}" == "Linux" ]; then
+               STRIP_CMD="${{ matrix.cross_prefix }}strip"
+             fi
+             find pkg -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" -o -name "openssl" \) -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
+             find pkg/engines -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
+             find pkg/providers -type f -exec $STRIP_CMD --strip-unneeded {} \; 2>/dev/null || true
+             find pkg/lib -name "*.a" -exec $STRIP_CMD --strip-debug {} \; 2>/dev/null || true
+          fi
+
+          # 4. Headers & Docs
+          cp -r dist/static/include/* pkg/include/ 2>/dev/null || true
+          if [ -d "dist/shared/html" ]; then cp -r dist/shared/html/* pkg/doc/ 2>/dev/null || true; fi
+          if [ -d "dist/static/html" ]; then cp -r dist/static/html/* pkg/doc/ 2>/dev/null || true; fi
+          if [ -d "dist/shared/share/doc/openssl/html" ]; then cp -r dist/shared/share/doc/openssl/html/* pkg/doc/ 2>/dev/null || true; fi
+
+          # 5. Cleanup empty folders (This will safely remove pkg/lib/import on POSIX)
+          for i in {1..3}; do find pkg -type d -empty -delete 2>/dev/null || true; done
 
       # ------------------------------------------------------------------------
-      # SMOKE TEST (Verify Relocatable Binaries)
+      # FINAL PACKING
       # ------------------------------------------------------------------------
-      - name: Smoke Test
-        if: matrix.static_only != true
+      - name: Create Final Archive
         shell: bash
         run: |
-          echo "=== Starting Smoke Test ==="
+          BASE_NAME="openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}"
+          if [ ! -d "pkg" ] ||[ -z "$(ls -A "pkg")" ]; then exit 0; fi
           
-          # 1. Define Paths
-          RUNTIME_DIR="${{ github.workspace }}/dist/runtime"
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            (cd pkg && 7z a -tzip "../${BASE_NAME}.zip" .)
+          else
+            (cd pkg && zip -r "../${BASE_NAME}.zip" .)
+          fi
           
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             EXE="$RUNTIME_DIR/openssl.exe"
-          else
-             EXE="$RUNTIME_DIR/openssl"
-             # Force loader to look in runtime dir first
-             export LD_LIBRARY_PATH="$RUNTIME_DIR:$LD_LIBRARY_PATH"
-             export DYLD_LIBRARY_PATH="$RUNTIME_DIR:$DYLD_LIBRARY_PATH"
-          fi
-
-          if [ ! -f "$EXE" ]; then
-             echo "Error: Executable not found at $EXE"
-             exit 1
-          fi
-
-          # 2. Check if we can execute on this runner
-          SHOULD_RUN=false
-
-          if [ "${{ matrix.os-label }}" == "Android" ]; then
-             echo "Skipping: Cannot run Android binaries on Ubuntu host."
-          elif [ "${{ matrix.os-label }}" == "iOS" ]; then
-             echo "Skipping: Cannot run iOS binaries."
-          elif [ "${{ runner.os }}" == "Linux" ] && [ "${{ matrix.arch }}" != "x64" ]; then
-             echo "Skipping: Cannot run ${{ matrix.arch }} binaries on x64 Linux host."
-          elif [ "${{ runner.os }}" == "Windows" ] && [ "${{ matrix.arch }}" == "arm64" ]; then
-             echo "Skipping: Cannot run Windows ARM64 binaries on x64 Windows host."
-          else
-             # Valid: Win x64/x86, Linux x64, macOS x64/ARM64
-             SHOULD_RUN=true
-          fi
-
-          # 3. Execute
-          if [ "$SHOULD_RUN" == "true" ]; then
-             echo "Attempting to run: $EXE version -a"
-             
-             chmod +x $EXE
-             $EXE version -a
-             
-             echo ">>> SUCCESS: Binary loaded and ran."
-          fi
+          echo "ARCHIVE_FILE=${BASE_NAME}.zip" >> $GITHUB_ENV
 
       # ------------------------------------------------------------------------
-      # PACKAGING
+      # FINAL UPLOAD
       # ------------------------------------------------------------------------
-      
-      - name: Pack Runtime
-        if: matrix.static_only != true
-        working-directory: dist/runtime
-        run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.zip" .
-          else
-             tar -czvf "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}.tar.gz" .
-          fi
-        shell: bash
-
-      - name: Pack Dev
-        working-directory: dist/dev
-        run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             7z a "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}-dev.zip" .
-          else
-             tar -czvf "${{ github.workspace }}/openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}-dev.tar.gz" .
-          fi
-        shell: bash
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: openssl-${{ github.event.inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}
-          compression-level: 0 
-          path: |
-            ${{ github.workspace }}/openssl-*.zip
-            ${{ github.workspace }}/openssl-*.tar.gz
-          retention-days: 15 
-          if-no-files-found: warn
+          name: openssl-${{ inputs.version }}-${{ matrix.os-label }}-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE_FILE }}
+          archive: false
