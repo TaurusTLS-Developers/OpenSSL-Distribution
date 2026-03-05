@@ -35,7 +35,7 @@ jobs:
             EOL_DATE=$(echo "$API_RESPONSE" | jq -r '.eol')
             
             # If EOL_DATE is not false and not null, we check it against today
-            if [ "$EOL_DATE" != "false" ] &&[ "$EOL_DATE" != "null" ]; then
+            if [ "$EOL_DATE" != "false" ] && [ "$EOL_DATE" != "null" ]; then
               CURRENT_DATE=$(date +%Y-%m-%d)
               if [[ "$EOL_DATE" < "$CURRENT_DATE" ]] || [[ "$EOL_DATE" == "$CURRENT_DATE" ]]; then
                 echo "❌ Warning: OpenSSL $CYCLE reached EOL on $EOL_DATE."
@@ -104,12 +104,14 @@ jobs:
           # --- MACOS ---
           - os-label: macOS
             os-runner: macos-14
-            arch: x64
-            target: darwin64-x86_64-cc
-          - os-label: macOS
-            os-runner: macos-14
-            arch: arm64
-            target: darwin64-arm64-cc
+            arch: universal
+            targets:
+              - target: darwin64-x86_64-cc
+                minos: "10.14"
+                arch: x86_64
+              - target: darwin64-arm64-cc
+                minos: "11.0"
+                arch: arm64
 
           # --- ANDROID ---
           - os-label: Android
@@ -179,7 +181,7 @@ jobs:
           nmake install_html_docs || echo "Docs failed"
 
       - name: Build Shared (Unix/Android)
-        if: runner.os != 'Windows' && matrix.static_only != true
+        if: runner.os != 'Windows' &&  matrix.os-label != 'macOS' && matrix.static_only != true
         working-directory: src
         env:
           CROSS_COMPILE: ${{ matrix.cross_prefix }}
@@ -223,7 +225,7 @@ jobs:
           nmake install_sw
 
       - name: Build Static (Unix/Android/iOS)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' &&  matrix.os-label != 'macOS'
         working-directory: src
         env:
           CROSS_COMPILE: ${{ matrix.cross_prefix }}
@@ -262,6 +264,154 @@ jobs:
           
           mkdir -p ../dist/static
           cp -r ../_staging_static/usr/local/* ../dist/static/
+
+      # ------------------------------------------------------------------------
+      # MACOS UNIVERSAL BUILD
+      # ------------------------------------------------------------------------
+      - name: Build Universal (macOS)
+        if: matrix.os-label == 'macOS'
+        working-directory: src
+        shell: bash
+        env:
+          TARGETS_JSON: ${{ toJSON(matrix.targets) }}
+        run: |
+          # 1. Safely extract targets into a newline-separated list
+          # This prevents OpenSSL's Configure/make from consuming stdin and skipping arm64
+          TARGETS_LIST=$(echo "$TARGETS_JSON" | jq -c '.[]')
+          
+          # Change Internal Field Separator to newline only for the loop
+          IFS=$'\n'
+          for i in $TARGETS_LIST; do
+            unset IFS # Reset IFS inside the loop for normal behavior
+            
+            TARGET=$(echo "$i" | jq -r '.target')
+            MINOS=$(echo "$i" | jq -r '.minos')
+            ARCH=$(echo "$i" | jq -r '.arch')
+            EXTRA_FLAGS="-mmacosx-version-min=$MINOS"
+            
+            echo "======================================================="
+            echo " Building macOS $ARCH ($TARGET)"
+            echo "======================================================="
+            
+            # --- SHARED ---
+            make clean || true
+            ./Configure $TARGET shared no-tests $EXTRA_FLAGS --prefix=/usr/local
+            make -j$(sysctl -n hw.ncpu)
+            make install_sw DESTDIR="$PWD/_staging_$ARCH/shared"
+            make install_html_docs DESTDIR="$PWD/_staging_$ARCH/shared" || true
+            
+            # --- STATIC ---
+            make clean || true
+            if ! ./Configure $TARGET no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix=/usr/local; then
+              ./Configure $TARGET no-shared no-module no-tests $EXTRA_FLAGS --prefix=/usr/local
+            fi
+            make -j$(sysctl -n hw.ncpu)
+            make install_sw DESTDIR="$PWD/_staging_$ARCH/static"
+            
+            # --- Relocatability & Stripping ---
+            echo "Making $ARCH binaries relocatable and stripping symbols..."
+            LIB_DIR="$PWD/_staging_$ARCH/shared/usr/local/lib"
+            
+            rm -f "$LIB_DIR"/libcrypto.dylib "$LIB_DIR"/libssl.dylib
+            
+            for lib in "$LIB_DIR"/lib*.dylib; do
+              if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+                install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
+                strip -x "$lib" || true
+              fi
+            done
+            
+            find "$PWD/_staging_$ARCH/shared" -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target_file; do
+              if [[ "$target_file" == *"openssl" ]]; then
+                strip "$target_file" || true
+              else
+                strip -x "$target_file" || true
+              fi
+              
+              DEPS=$(otool -L "$target_file" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
+              for dep in $DEPS; do
+                depname=$(basename "$dep")
+                if [[ "$target_file" == *"engines"* ]] || [[ "$target_file" == *"providers"* ]]; then
+                  install_name_tool -change "$dep" "@loader_path/../$depname" "$target_file" || true
+                else
+                  install_name_tool -change "$dep" "@loader_path/$depname" "$target_file" || true
+                fi
+              done
+              install_name_tool -add_rpath "@executable_path" "$target_file" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path" "$target_file" 2>/dev/null || true
+            done
+            
+            STATIC_LIB_DIR="$PWD/_staging_$ARCH/static/usr/local/lib"
+            find "$STATIC_LIB_DIR" -type f -name "*.a" | while read -r static_lib; do
+              strip -S "$static_lib" || true
+            done
+          done
+          
+          echo "======================================================="
+          echo " Combining architectures with lipo"
+          echo "======================================================="
+          mkdir -p ../dist/shared ../dist/static
+          
+          # Copy base structure from x86_64
+          cp -R _staging_x86_64/shared/usr/local/* ../dist/shared/
+          cp -R _staging_x86_64/static/usr/local/* ../dist/static/
+          
+          # Helper to lipo physical files into the dist/ directory
+          lipo_file() {
+             local rel_path=$1
+             local f_x86="_staging_x86_64/$rel_path"
+             local f_arm="_staging_arm64/$rel_path"
+             
+             # Safely replace '/usr/local/' with '/' using sed
+             local out_path="../dist/$(echo "$rel_path" | sed 's|/usr/local/|/|')"
+             
+             # Skip symlinks
+             if [ -L "$f_x86" ]; then
+                return 0
+             fi
+             
+             echo "Combining: $rel_path"
+             
+             if [ ! -f "$f_x86" ]; then 
+                echo "❌ Error: Missing x86_64 file at $f_x86"
+                exit 1
+             fi
+             if [ ! -f "$f_arm" ]; then 
+                echo "❌ Error: Missing arm64 file at $f_arm"
+                exit 1
+             fi
+             
+             mkdir -p "$(dirname "$out_path")"
+             lipo -create -output "$out_path" "$f_x86" "$f_arm"
+             echo "  ✅ Success: Created Universal Binary"
+          }
+          
+          # Lipo Executable
+          lipo_file "shared/usr/local/bin/openssl"
+          
+          # Lipo Shared Libs
+          find _staging_x86_64/shared/usr/local/lib -maxdepth 1 -type f -name "*.dylib" | while read -r f; do
+             lipo_file "shared/usr/local/lib/$(basename "$f")"
+          done
+          
+          # Lipo Engines
+          if [ -d "_staging_x86_64/shared/usr/local/lib/engines-3" ]; then
+            find _staging_x86_64/shared/usr/local/lib/engines-3 -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r f; do
+               lipo_file "shared/usr/local/lib/engines-3/$(basename "$f")"
+            done
+          fi
+          
+          # Lipo Providers
+          if [ -d "_staging_x86_64/shared/usr/local/lib/ossl-modules" ]; then
+            find _staging_x86_64/shared/usr/local/lib/ossl-modules -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r f; do
+               lipo_file "shared/usr/local/lib/ossl-modules/$(basename "$f")"
+            done
+          fi
+          
+          # Lipo Static Libs
+          find _staging_x86_64/static/usr/local/lib -maxdepth 1 -type f -name "*.a" | while read -r f; do
+             lipo_file "static/usr/local/lib/$(basename "$f")"
+          done
 
       # ------------------------------------------------------------------------
       # PACKAGING (Single Package, NO Debug Info, NO Symlinks)
@@ -330,7 +480,7 @@ jobs:
               
               # Copy REAL files only (Strictly ignoring symlinks)
               for file in "$LIBDIR"/*.so* "$LIBDIR"/*.dylib*; do
-                if [ -f "$file" ] &&[ ! -L "$file" ]; then
+                if [ -f "$file" ] && [ ! -L "$file" ]; then
                   cp "$file" pkg/
                 fi
               done
@@ -366,35 +516,35 @@ jobs:
               done
               
               # --- macOS Relocatability & Duplicate Cleanup ---
-              if [ "${{ runner.os }}" == "macOS" ]; then
-                echo "Making macOS binaries relocatable and cleaning duplicates..."
-                
-                rm -f pkg/libcrypto.dylib pkg/libssl.dylib
-                
-                echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
-                echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
-                SYMLINKS_FOUND=true
-
-                for lib in pkg/lib*.dylib; do
-                  if [ -f "$lib" ]; then
-                    install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
-                  fi
-                done
-                
-                find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
-                  DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
-                  for dep in $DEPS; do
-                    depname=$(basename "$dep")
-                    if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
-                      install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
-                    else
-                      install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
-                    fi
-                  done
-                  install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
-                  install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
-                done
-              fi
+              #if [ "${{ runner.os }}" == "macOS" ]; then
+              #  echo "Making macOS binaries relocatable and cleaning duplicates..."
+              #  
+              #  rm -f pkg/libcrypto.dylib pkg/libssl.dylib
+              #  
+              #  echo "ln -sf libcrypto.3.dylib libcrypto.dylib" >> "$SCRIPT_FILE"
+              #  echo "ln -sf libssl.3.dylib libssl.dylib" >> "$SCRIPT_FILE"
+              #  SYMLINKS_FOUND=true
+              #
+              #  for lib in pkg/lib*.dylib; do
+              #    if [ -f "$lib" ]; then
+              #      install_name_tool -id "@rpath/$(basename "$lib")" "$lib" || true
+              #    fi
+              #  done
+              #  
+              #  find pkg -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target; do
+              #    DEPS=$(otool -L "$target" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
+              #    for dep in $DEPS; do
+              #      depname=$(basename "$dep")
+              #      if [[ "$target" == *"engines"* ]] || [[ "$target" == *"providers"* ]]; then
+              #        install_name_tool -change "$dep" "@loader_path/../$depname" "$target" || true
+              #      else
+              #        install_name_tool -change "$dep" "@loader_path/$depname" "$target" || true
+              #      fi
+              #    done
+              #    install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+              #    install_name_tool -add_rpath "@loader_path" "$target" 2>/dev/null || true
+              #  done
+              #fi
               
               if [ "$SYMLINKS_FOUND" = true ]; then
                   chmod +x "$SCRIPT_FILE"
