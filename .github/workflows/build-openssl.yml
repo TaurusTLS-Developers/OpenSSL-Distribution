@@ -241,6 +241,12 @@ jobs:
           elif [ "${{ matrix.os-label }}" == "iOS" ]; then
             export CROSS_TOP=$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer
             export CROSS_SDK=iPhoneOS.sdk
+          elif [ "${{ matrix.os-label }}" == "macOS" ]; then
+            if [ "${{ matrix.arch }}" == "arm64" ]; then
+              EXTRA_FLAGS="-mmacosx-version-min=11.0"
+            elif [ "${{ matrix.arch }}" == "x64" ]; then
+              EXTRA_FLAGS="-mmacosx-version-min=10.14"
+            fi
           fi
           
           # Try with no-apps (3.2+), fallback to without no-apps (3.0/3.1)
