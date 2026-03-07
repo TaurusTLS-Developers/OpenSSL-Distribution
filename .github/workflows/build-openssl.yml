@@ -487,6 +487,8 @@ jobs:
     needs: package-release
     runs-on: ubuntu-latest
     if: inputs.keep_raw_artifacts != true
+    permissions:
+      actions: write
     steps:
       - name: Delete Raw and Common Artifacts
         env:
