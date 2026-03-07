@@ -103,6 +103,7 @@ jobs:
         linkage: [shared, static]
         platform:
           - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
+          - { label: Windows, os: windows-latest, arch: x86, target: VC-WIN32, vcvars: x86 }
           # - { label: Windows, os: windows-latest, arch: arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 } # ARM64 build is currently disabled due possible confusion with ARM64EC
           - { label: Windows, os: windows-latest, arch: arm64ec, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
           - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
@@ -228,6 +229,7 @@ jobs:
         include:
           # Windows packaging moved to ubuntu-latest for speed and native 'zip' support
           - { label: Windows, arch: x64, runner: ubuntu-latest }
+          - { label: Windows, arch: x86, runner: ubuntu-latest }
           # - { label: Windows, arch: arm64, runner: ubuntu-latest } # Windows arm64 package is disabled
           - { label: Windows, arch: arm64ec, runner: ubuntu-latest }
           
@@ -242,7 +244,7 @@ jobs:
           - { label: macOS, arch: universal, runner: macos-14 }
           - { label: iOS, arch: arm64, runner: macos-14 }
           - { label: iOS, arch: sim-arm64, runner: macos-14 }
-          # - { label: iOS, arch: sim-x64, runner: macos-14 } # iOS x64 simulator package is disabled
+          # - { label: iOS, arch: sim-x64, runner: macos-14 } #iOS x64 simulator package is disabled
           
     runs-on: ${{ matrix.runner }}
     steps:
