@@ -357,6 +357,13 @@ jobs:
           SHARED_DIR="raw-binaries/raw-${{ matrix.label }}-${{ matrix.arch }}-shared/usr/local"
           STATIC_DIR="raw-binaries/raw-${{ matrix.label }}-${{ matrix.arch }}-static/usr/local"
           
+          # Handle lib vs lib64 (Linux x64 often defaults to lib64)
+          SHARED_LIB="$SHARED_DIR/lib"
+          [ -d "$SHARED_DIR/lib64" ] && SHARED_LIB="$SHARED_DIR/lib64"
+          
+          STATIC_LIB="$STATIC_DIR/lib"
+          [ -d "$STATIC_DIR/lib64" ] && STATIC_LIB="$STATIC_DIR/lib64"
+          
           # Executable
           [ -f "$SHARED_DIR/bin/openssl" ] && cp "$SHARED_DIR/bin/openssl" dist/
           [ -f "$SHARED_DIR/bin/openssl.exe" ] && cp "$SHARED_DIR/bin/openssl.exe" dist/
@@ -364,17 +371,21 @@ jobs:
           # Shared Libs
           if [ "${{ matrix.label }}" == "Windows" ]; then
             cp "$SHARED_DIR"/bin/*.dll dist/ 2>/dev/null || true
-            cp "$SHARED_DIR"/lib/*.lib dist/lib/import/ 2>/dev/null || true
+            cp "$SHARED_LIB"/*.lib dist/lib/import/ 2>/dev/null || true
           else
-            # -type f naturally excludes symlinks
-            find "$SHARED_DIR/lib" -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" \) -exec cp {} dist/ \; 2>/dev/null || true
+            # Explicitly exclude unversioned names in case artifacts converted symlinks to copies
+            find "$SHARED_LIB" -maxdepth 1 -type f \( -name "*.so*" -o -name "*.dylib" \) \
+              ! -name "libcrypto.so" ! -name "libssl.so" \
+              ! -name "libcrypto.dylib" ! -name "libssl.dylib" \
+              -exec cp {} dist/ \; 2>/dev/null || true
           fi
           
           # Engines & Providers
-          [ -d "$SHARED_DIR/lib/engines-3" ] && find "$SHARED_DIR/lib/engines-3" -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -exec cp {} dist/engines/ \; 2>/dev/null || true[ -d "$SHARED_DIR/lib/ossl-modules" ] && find "$SHARED_DIR/lib/ossl-modules" -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -exec cp {} dist/providers/ \; 2>/dev/null || true
+          [ -d "$SHARED_LIB/engines-3" ] && find "$SHARED_LIB/engines-3" -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -exec cp {} dist/engines/ \; 2>/dev/null || true
+          [ -d "$SHARED_LIB/ossl-modules" ] && find "$SHARED_LIB/ossl-modules" -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -exec cp {} dist/providers/ \; 2>/dev/null || true
           
           # Static Libs
-          [ -d "$STATIC_DIR/lib" ] && find "$STATIC_DIR/lib" -maxdepth 1 -type f \( -name "*.a" -o -name "*.lib" \) -exec cp {} dist/lib/static/ \; 2>/dev/null || true
+          [ -d "$STATIC_LIB" ] && find "$STATIC_LIB" -maxdepth 1 -type f \( -name "*.a" -o -name "*.lib" \) -exec cp {} dist/lib/static/ \; 2>/dev/null || true
           
           # Cleanup Unix Symbols (Windows PDBs are naturally ignored because we didn't copy them)
           if [ "${{ matrix.label }}" != "Windows" ]; then
