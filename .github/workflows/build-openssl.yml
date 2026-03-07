@@ -103,18 +103,18 @@ jobs:
         linkage: [shared, static]
         platform:
           - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
-          - { label: Windows, os: windows-latest, arch: arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
+          # - { label: Windows, os: windows-latest, arch: arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 } # ARM64 build is currently disabled due possible confusion with ARM64EC
           - { label: Windows, os: windows-latest, arch: arm64ec, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
           - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
           - { label: Linux, os: ubuntu-latest, arch: arm64, target: linux-aarch64 }
           - { label: macOS, os: macos-14, arch: x64, target: darwin64-x86_64-cc, minos: "10.14" }
           - { label: macOS, os: macos-14, arch: arm64, target: darwin64-arm64-cc, minos: "11.0" }
-          - { label: Android, os: ubuntu-latest, arch: x64, target: android-x86_64, api: 21 }
+          # - { label: Android, os: ubuntu-latest, arch: x64, target: android-x86_64, api: 21 } # Android x64 build is currently disabled as Delphi is not supporting Android x86 builds
           - { label: Android, os: ubuntu-latest, arch: arm64, target: android-arm64, api: 21 }
           - { label: Android, os: ubuntu-latest, arch: arm, target: android-arm, api: 21 }
           - { label: iOS, os: macos-14, arch: arm64, target: ios64-cross }
           - { label: iOS, os: macos-14, arch: sim-arm64, target: iossimulator-xcrun }
-          - { label: iOS, os: macos-14, arch: sim-x64, target: iossimulator-xcrun }
+          # - { label: iOS, os: macos-14, arch: sim-x64, target: iossimulator-xcrun } # iOS x64 simulator is currently disabled
         exclude:
           - linkage: shared
             platform: { label: iOS } # iOS is static only
@@ -228,13 +228,13 @@ jobs:
         include:
           # Windows packaging moved to ubuntu-latest for speed and native 'zip' support
           - { label: Windows, arch: x64, runner: ubuntu-latest }
-          - { label: Windows, arch: arm64, runner: ubuntu-latest }
+          # - { label: Windows, arch: arm64, runner: ubuntu-latest } # Windows arm64 package is disabled
           - { label: Windows, arch: arm64ec, runner: ubuntu-latest }
           
           # Linux & Android
           - { label: Linux, arch: x64, runner: ubuntu-latest }
           - { label: Linux, arch: arm64, runner: ubuntu-latest }
-          - { label: Android, arch: x64, runner: ubuntu-latest }
+          # - { label: Android, arch: x64, runner: ubuntu-latest } # Android x64 package is disabled
           - { label: Android, arch: arm64, runner: ubuntu-latest }
           - { label: Android, arch: arm, runner: ubuntu-latest }
           
@@ -242,7 +242,7 @@ jobs:
           - { label: macOS, arch: universal, runner: macos-14 }
           - { label: iOS, arch: arm64, runner: macos-14 }
           - { label: iOS, arch: sim-arm64, runner: macos-14 }
-          - { label: iOS, arch: sim-x64, runner: macos-14 }
+          # - { label: iOS, arch: sim-x64, runner: macos-14 } # iOS x64 simulator package is disabled
           
     runs-on: ${{ matrix.runner }}
     steps:
