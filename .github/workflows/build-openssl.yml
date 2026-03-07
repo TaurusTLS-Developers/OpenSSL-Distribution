@@ -498,7 +498,7 @@ jobs:
           ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
           
           # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
-          IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name | startswith("raw-") or .name == "openssl-common-assets") | .id')
+          IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select (.name | startswith("raw-") or . == "openssl-common-assets") | .id')
           
           if [ -z "$IDS" ]; then
             echo "No intermediate artifacts found to delete."
