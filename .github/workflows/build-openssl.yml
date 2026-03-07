@@ -465,6 +465,9 @@ jobs:
           Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
           EOF
           
+          # Remove any empty directories before zipping
+          find dist -type d -empty -delete
+          
           # Zip Architecture (No symlinks)
           ARCHIVE_NAME="openssl-${{ needs.validate-version.outputs.version }}-${{ matrix.label }}-${{ matrix.arch }}.zip"
           cd dist
