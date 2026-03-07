@@ -12,12 +12,21 @@ on:
         required: false
         type: boolean
         default: false
+      keep_raw_artifacts:
+        description: 'Keep raw build artifacts'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
         required: true
         type: string
       ignore_eol:
+        required: false
+        type: boolean
+        default: false
+      keep_raw_artifacts:
         required: false
         type: boolean
         default: false
@@ -469,3 +478,36 @@ jobs:
           name: build-metadata
           path: dist/version.txt
           retention-days: 5
+
+  # =========================================================================
+  # 4. CLEANUP RAW ARTIFACTS
+  # =========================================================================
+  cleanup-artifacts:
+    name: Cleanup Intermediate Artifacts
+    needs: package-release
+    runs-on: ubuntu-latest
+    if: inputs.keep_raw_artifacts != true
+    steps:
+      - name: Delete Raw and Common Artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching artifacts for run ${{ github.run_id }}..."
+          
+          # Fetch all artifacts for this run
+          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
+          
+          # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
+          IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name | startswith("raw-") or .name == "openssl-common-assets") | .id')
+          
+          if [ -z "$IDS" ]; then
+            echo "No intermediate artifacts found to delete."
+            exit 0
+          fi
+          
+          for id in $IDS; do
+            echo "Deleting artifact ID: $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+          done
+          
+          echo "✅ Cleanup complete."    
