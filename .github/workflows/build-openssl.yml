@@ -86,7 +86,7 @@ jobs:
           make install_html_docs DESTDIR=$PWD/common-assets || true
           
       - name: Upload Common Assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openssl-common-assets
           path: common-assets/usr/local
@@ -213,7 +213,7 @@ jobs:
           make install_sw DESTDIR="$PWD/raw_artifact"
 
       - name: Upload Raw Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: raw-${{ matrix.platform.label }}-${{ matrix.platform.arch }}-${{ matrix.linkage }}
           path: raw_artifact
@@ -253,14 +253,14 @@ jobs:
       - uses: actions/checkout@v6
       
       - name: Download Common Assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: openssl-common-assets
           path: common-assets
           
       - name: Download Raw Binaries (Standard)
         if: matrix.label != 'macOS'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: raw-${{ matrix.label }}-${{ matrix.arch }}-*
           path: raw-binaries
@@ -268,7 +268,7 @@ jobs:
           
       - name: Download Raw Binaries (macOS Universal)
         if: matrix.label == 'macOS'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: raw-macOS-*
           path: raw-binaries
@@ -398,6 +398,12 @@ jobs:
             done
           fi
 
+      - name: Download OpenSSL License
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          curl -sSL "https://raw.githubusercontent.com/openssl/openssl/openssl-${{ needs.validate-version.outputs.version }}/LICENSE.txt" -o dist/LICENSE.txt
+          
       - name: Finalize Package
         shell: bash
         run: |
@@ -491,7 +497,7 @@ jobs:
 
       - name: Upload Build Metadata (Once)
         if: matrix.label == 'Linux' && matrix.arch == 'x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-metadata
           path: dist/version.txt
