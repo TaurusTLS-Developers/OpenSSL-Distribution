@@ -129,6 +129,9 @@ jobs:
           Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
           EOF
           
+          # Remove unnecessary large directories
+          rm -rf common-assets/usr/local/lib common-assets/usr/local/lib64 common-assets/usr/local/bin common-assets/usr/local/ssl
+          
       - name: Upload Common Assets
         uses: actions/upload-artifact@v7
         with:
