@@ -128,8 +128,8 @@ jobs:
           repository: openssl/openssl
           ref: openssl-${{ needs.validate-version.outputs.version }}
 
-      - name: Compile Windows
-        if: matrix.platform.label == 'Windows'
+      - name: Compile Windows (Standard)
+        if: matrix.platform.label == 'Windows' && matrix.platform.arch != 'arm64ec'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.platform.vcvars }}
@@ -139,24 +139,57 @@ jobs:
           
           :: --- SHARED BUILD ---
           if "${{ matrix.linkage }}"=="shared" (
-            if "${{ matrix.platform.arch }}"=="arm64ec" (
-              perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
-            ) else (
-              perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests -D_WIN32_WINNT=0x0A00
-            )
+            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests -D_WIN32_WINNT=0x0A00
           )
           
           :: --- STATIC BUILD ---
           if "${{ matrix.linkage }}"=="static" (
-            if "${{ matrix.platform.arch }}"=="arm64ec" (
-              perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
-            ) else (
-              perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests "CFLAGS=/MD -D_WIN32_WINNT=0x0A00" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests "CFLAGS=/MD -D_WIN32_WINNT=0x0A00"
-            )
+            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests "CFLAGS=/MD -D_WIN32_WINNT=0x0A00" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests "CFLAGS=/MD -D_WIN32_WINNT=0x0A00"
           )
           
-          nmake
-          nmake install_sw
+          nmake && nmake install_sw
+
+      - name: Compile Windows (ARM64EC)
+        if: matrix.platform.label == 'Windows' && matrix.platform.arch == 'arm64ec'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.platform.vcvars }}
+          
+          set "PREFIX=%GITHUB_WORKSPACE%\raw_artifact\usr\local"
+          set "TARGET=${{ matrix.platform.target }}"
+          
+          :: --- SHARED BUILD ---
+          if "${{ matrix.linkage }}"=="shared" (
+            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+          )
+          
+          :: --- STATIC BUILD ---
+          if "${{ matrix.linkage }}"=="static" (
+            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+          )
+          
+          nmake && nmake install_sw
+
+      - name: Organize Windows Binaries
+        if: matrix.platform.label == 'Windows'
+        shell: cmd
+        run: |
+          set "PREFIX=%GITHUB_WORKSPACE%\raw_artifact\usr\local"
+          mkdir raw_artifact\dist
+          
+          if "${{ matrix.linkage }}"=="shared" (
+            mkdir raw_artifact\dist\engines
+            mkdir raw_artifact\dist\providers
+            mkdir raw_artifact\dist\lib\import
+            copy "%PREFIX%\bin\openssl.exe" raw_artifact\dist\
+            copy "%PREFIX%\bin\*.dll" raw_artifact\dist\
+            copy "%PREFIX%\lib\engines-3\*.dll" raw_artifact\dist\engines\
+            copy "%PREFIX%\lib\ossl-modules\*.dll" raw_artifact\dist\providers\
+            copy "%PREFIX%\lib\*.lib" raw_artifact\dist\lib\import\
+          ) else (
+            mkdir raw_artifact\dist\lib\static
+            copy "%PREFIX%\lib\*.lib" raw_artifact\dist\lib\static\
+          )
 
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
@@ -167,13 +200,14 @@ jobs:
             sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           fi
 
-      - name: Compile Unix (Linux/macOS/Android/iOS)
+      - name: Compile Unix (POSIX)
         if: matrix.platform.label != 'Windows'
         shell: bash
         run: |
           TARGET="${{ matrix.platform.target }}"
           LINKAGE="${{ matrix.linkage }}"
           LABEL="${{ matrix.platform.label }}"
+          PREFIX="${{ github.workspace }}/raw_artifact/usr/local"
           
           EXTRA_FLAGS=""
           
@@ -202,21 +236,73 @@ jobs:
           
           # --- Configure & Build ---
           if [ "$LINKAGE" == "shared" ]; then
-            ./Configure $TARGET shared no-tests $EXTRA_FLAGS --prefix=/usr/local
+            ./Configure $TARGET shared no-tests $EXTRA_FLAGS --prefix="$PREFIX"
           else
-            if ! ./Configure $TARGET no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix=/usr/local; then
-              ./Configure $TARGET no-shared no-module no-tests $EXTRA_FLAGS --prefix=/usr/local
+            if ! ./Configure $TARGET no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"; then
+              ./Configure $TARGET no-shared no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"
             fi
           fi
           
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          make install_sw DESTDIR="$PWD/raw_artifact"
+          make install_sw DESTDIR="/"
+
+      - name: Organize Unix Binaries
+        if: matrix.platform.label != 'Windows'
+        shell: bash
+        run: |
+          LABEL="${{ matrix.platform.label }}"
+          LINKAGE="${{ matrix.linkage }}"
+          PREFIX="${{ github.workspace }}/raw_artifact/usr/local"
+          mkdir -p raw_artifact/dist/{engines,providers,lib/static}
+          
+          if [ "$LINKAGE" == "shared" ]; then
+            # Executable
+            [ -f "$PREFIX/bin/openssl" ] && cp "$PREFIX/bin/openssl" raw_artifact/dist/
+            
+            # Shared Libs
+            if [ "$LABEL" == "Android" ]; then
+              cp "$PREFIX/lib"/*.so raw_artifact/dist/ 2>/dev/null || cp "$PREFIX/lib64"/*.so raw_artifact/dist/ 2>/dev/null || true
+            else
+              # Versioned libs only
+              cp "$PREFIX/lib"/*.so.3 raw_artifact/dist/ 2>/dev/null || cp "$PREFIX/lib64"/*.so.3 raw_artifact/dist/ 2>/dev/null || true
+              cp "$PREFIX/lib"/*.3.dylib raw_artifact/dist/ 2>/dev/null || true
+            fi
+            
+            # Engines & Providers
+            cp "$PREFIX/lib"*/engines-3/*.so raw_artifact/dist/engines/ 2>/dev/null || cp "$PREFIX/lib"*/engines-3/*.dylib raw_artifact/dist/engines/ 2>/dev/null || true
+            cp "$PREFIX/lib"*/ossl-modules/*.so raw_artifact/dist/providers/ 2>/dev/null || cp "$PREFIX/lib"*/ossl-modules/*.dylib raw_artifact/dist/providers/ 2>/dev/null || true
+            
+            # Stripping (Non-macOS)
+            if [ "$LABEL" != "macOS" ]; then
+              find raw_artifact/dist -maxdepth 1 -type f \( -name "openssl" -o -name "*.so*" \) -exec strip {} + 2>/dev/null || true
+              find raw_artifact/dist/engines raw_artifact/dist/providers -type f -name "*.so" -exec strip {} + 2>/dev/null || true
+            fi
+            
+            # Symlinks script (Linux/macOS)
+            if [ "$LABEL" == "Linux" ]; then
+              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.so.3 libcrypto.so\nln -sf libssl.so.3 libssl.so" > raw_artifact/dist/install_symlinks.sh
+              chmod +x raw_artifact/dist/install_symlinks.sh
+            elif [ "$LABEL" == "macOS" ]; then
+              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.3.dylib libcrypto.dylib\nln -sf libssl.3.dylib libssl.dylib" > raw_artifact/dist/install_symlinks.sh
+              chmod +x raw_artifact/dist/install_symlinks.sh
+            fi
+            
+          else
+            # Static linkage
+            cp "$PREFIX/lib"/*.a raw_artifact/dist/lib/static/ 2>/dev/null || cp "$PREFIX/lib64"/*.a raw_artifact/dist/lib/static/ 2>/dev/null || true
+            # Stripping (Non-macOS)
+            if [ "$LABEL" != "macOS" ]; then
+              find raw_artifact/dist/lib/static -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
+            fi
+          fi
+          
+          find raw_artifact/dist -type d -empty -delete
 
       - name: Upload Raw Artifact
         uses: actions/upload-artifact@v7
         with:
           name: raw-${{ matrix.platform.label }}-${{ matrix.platform.arch }}-${{ matrix.linkage }}
-          path: raw_artifact
+          path: raw_artifact/dist
           retention-days: 1
 
   # =========================================================================
@@ -275,94 +361,23 @@ jobs:
           merge-multiple: false
 
       - name: Create Base Directories
-        run: |
-          mkdir -p dist/{engines,providers,include,doc,lib/import,lib/static}
-          cp -r common-assets/include/* dist/include/
-          cp -r common-assets/doc/* dist/doc/
-          cp common-assets/LICENSE.txt dist/ || true
-          cp common-assets/README.txt dist/ || true
-          cp build-metadata/version.txt dist/ || true
+        run: mkdir -p dist
 
-      - name: Organize Windows
-        if: matrix.label == 'Windows'
+      - name: Merge Binaries and Assets
+        if: matrix.label != 'macOS'
         run: |
-          # Executables & Shared Libs
-          find raw-binaries/raw-*-shared -type f -name "openssl.exe" -exec cp {} dist/ \;
-          find raw-binaries/raw-*-shared -type f -name "*.dll" -exec cp {} dist/ \;
-          
-          # Engines & Providers
-          find raw-binaries/raw-*-shared -path "*/engines*/*.dll" -exec cp {} dist/engines/ \;
-          find raw-binaries/raw-*-shared -path "*/providers*/*.dll" -exec cp {} dist/providers/ \;
-          
-          # Import Libs (Must come from the shared build)
-          find raw-binaries/raw-*-shared -type f -name "*.lib" -exec cp {} dist/lib/import/ \;
-          
-          # True Static Libs (Must come from the static build)
-          find raw-binaries/raw-*-static -type f -name "*.lib" -exec cp {} dist/lib/static/ \;
+          # Merge all dist folders from downloaded raw artifacts
+          cp -rn raw-binaries/*/dist/* dist/ 2>/dev/null || cp -rn raw-binaries/*/* dist/ 2>/dev/null || true
 
-      - name: Organize Linux
-        if: matrix.label == 'Linux'
-        run: |
-          # Executable
-          find raw-binaries/raw-*-shared -type f -name "openssl" -exec cp {} dist/ \;
-          
-          # Shared Libs: Explicitly EXCLUDE the unversioned physical duplicates
-          # We only want the versioned ones (e.g., libcrypto.so.3)
-          find raw-binaries/raw-*-shared/usr/local/lib* -maxdepth 1 -type f -name "*.so*" ! -name "libcrypto.so" ! -name "libssl.so" -exec cp {} dist/ \;
-          
-          # Engines & Providers
-          find raw-binaries/raw-*-shared -path "*/engines*/*.so" -exec cp {} dist/engines/ \;
-          find raw-binaries/raw-*-shared -path "*/providers*/*.so" -exec cp {} dist/providers/ \;
-          
-          # Static Libs
-          find raw-binaries/raw-*-static -type f -name "*.a" -exec cp {} dist/lib/static/ \;
-          
-          # Generate Symlink Script for end-users
-          cat << 'EOF' > dist/install_symlinks.sh
-          #!/bin/sh
-          ln -sf libcrypto.so.3 libcrypto.so
-          ln -sf libssl.so.3 libssl.so
-          EOF
-          chmod +x dist/install_symlinks.sh
-
-      - name: Organize Android
-        if: matrix.label == 'Android'
-        run: |
-          # Executable
-          find raw-binaries/raw-*-shared -type f -name "openssl" -exec cp {} dist/ \;
-          
-          # Shared Libs: Android does NOT use version suffixes, so we MUST keep libcrypto.so
-          find raw-binaries/raw-*-shared/usr/local/lib* -maxdepth 1 -type f -name "*.so" -exec cp {} dist/ \;
-          
-          # Engines & Providers
-          find raw-binaries/raw-*-shared -path "*/engines*/*.so" -exec cp {} dist/engines/ \;
-          find raw-binaries/raw-*-shared -path "*/providers*/*.so" -exec cp {} dist/providers/ \;
-          
-          # Static Libs
-          find raw-binaries/raw-*-static -type f -name "*.a" -exec cp {} dist/lib/static/ \;
-
-      - name: Organize iOS
-        if: matrix.label == 'iOS'
-        run: |
-          # iOS is Static Only. 
-          # Using a generic find on 'raw-binaries' bypasses the download-artifact single-match quirk entirely!
-          find raw-binaries -type f -name "*.a" -exec cp {} dist/lib/static/ \;
-
-      - name: Cleanup Empty Directories
-        run: find dist -type d -empty -delete    
-      
       - name: Organize & Lipo (macOS Universal)
         if: matrix.label == 'macOS'
         shell: bash
         run: |
-          # 1. Strip and Relocate Individual Architectures
+          # 1. Relocate and Strip individual architectures
           for arch in x64 arm64; do
-            SHARED_DIR="raw-binaries/raw-macOS-$arch-shared/usr/local"
-            STATIC_DIR="raw-binaries/raw-macOS-$arch-static/usr/local"
+            BASE_DIR="raw-binaries/raw-macOS-$arch-shared"
             
-            rm -f "$SHARED_DIR/lib"/libcrypto.dylib "$SHARED_DIR/lib"/libssl.dylib
-            
-            find "$SHARED_DIR" -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target_file; do
+            find "$BASE_DIR" -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target_file; do
               if [[ "$target_file" == *"openssl" ]]; then
                 strip "$target_file" || true
               else
@@ -386,52 +401,50 @@ jobs:
               install_name_tool -add_rpath "@loader_path" "$target_file" 2>/dev/null || true
             done
             
-            find "$STATIC_DIR" -type f -name "*.a" | while read -r static_lib; do
-              strip -S "$static_lib" || true
-            done
+            find "raw-binaries/raw-macOS-$arch-static" -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
           done
           
-          # 2. Combine with Lipo into exact strict layout
-          mkdir -p dist/engines dist/providers dist/lib/static
+          # 2. Combine with Lipo
+          mkdir -p dist/{engines,providers,lib/static}
           
           lipo_file() {
-            local src_path=$1
+            local rel_path=$1
             local dest_path=$2
-            local f_x86="raw-binaries/raw-macOS-x64-$src_path"
-            local f_arm="raw-binaries/raw-macOS-arm64-$src_path"
+            local f_x86="raw-binaries/raw-macOS-x64-shared/$rel_path"
+            local f_arm="raw-binaries/raw-macOS-arm64-shared/$rel_path"
             
-            if [ -L "$f_x86" ]; then return 0; fi
+            if [ ! -f "$f_x86" ]; then
+              f_x86="raw-binaries/raw-macOS-x64-static/$rel_path"
+              f_arm="raw-binaries/raw-macOS-arm64-static/$rel_path"
+            fi
+            
             if [ ! -f "$f_x86" ] || [ ! -f "$f_arm" ]; then return 0; fi
-            
             lipo -create -output "$dest_path" "$f_x86" "$f_arm"
           }
           
-          lipo_file "shared/usr/local/bin/openssl" "dist/openssl"
+          lipo_file "openssl" "dist/openssl"
           
-          find raw-binaries/raw-macOS-x64-shared/usr/local/lib -maxdepth 1 -type f -name "*.dylib" | while read -r f; do
-            lipo_file "shared/usr/local/lib/$(basename "$f")" "dist/$(basename "$f")"
+          find raw-binaries/raw-macOS-x64-shared -maxdepth 1 -type f -name "*.dylib" | while read -r f; do
+            lipo_file "$(basename "$f")" "dist/$(basename "$f")"
           done
           
-          if [ -d "raw-binaries/raw-macOS-x64-shared/usr/local/lib/engines-3" ]; then
-            find raw-binaries/raw-macOS-x64-shared/usr/local/lib/engines-3 -type f -name "*.dylib" | while read -r f; do
-              lipo_file "shared/usr/local/lib/engines-3/$(basename "$f")" "dist/engines/$(basename "$f")"
-            done
-          fi
-          
-          if [ -d "raw-binaries/raw-macOS-x64-shared/usr/local/lib/ossl-modules" ]; then
-            find raw-binaries/raw-macOS-x64-shared/usr/local/lib/ossl-modules -type f -name "*.dylib" | while read -r f; do
-              lipo_file "shared/usr/local/lib/ossl-modules/$(basename "$f")" "dist/providers/$(basename "$f")"
-            done
-          fi
-          
-          find raw-binaries/raw-macOS-x64-static/usr/local/lib -maxdepth 1 -type f -name "*.a" | while read -r f; do
-            lipo_file "static/usr/local/lib/$(basename "$f")" "dist/lib/static/$(basename "$f")"
+          [ -d "raw-binaries/raw-macOS-x64-shared/engines" ] && find raw-binaries/raw-macOS-x64-shared/engines -type f -name "*.dylib" | while read -r f; do
+            lipo_file "engines/$(basename "$f")" "dist/engines/$(basename "$f")"
           done
+          
+          [ -d "raw-binaries/raw-macOS-x64-shared/providers" ] && find raw-binaries/raw-macOS-x64-shared/providers -type f -name "*.dylib" | while read -r f; do
+            lipo_file "providers/$(basename "$f")" "dist/providers/$(basename "$f")"
+          done
+          
+          find raw-binaries/raw-macOS-x64-static/lib/static -type f -name "*.a" | while read -r f; do
+            lipo_file "lib/static/$(basename "$f")" "dist/lib/static/$(basename "$f")"
+          done
+          
+          cp raw-binaries/raw-macOS-x64-shared/install_symlinks.sh dist/ 2>/dev/null || true
 
       - name: Download OpenSSL License
         shell: bash
         run: |
-          VERSION="${{ needs.validate-version.outputs.version }}"
           curl -sSL "https://raw.githubusercontent.com/openssl/openssl/openssl-${{ needs.validate-version.outputs.version }}/LICENSE.txt" -o dist/LICENSE.txt
           
       - name: Finalize Package
@@ -445,23 +458,15 @@ jobs:
           # Create Metadata
           echo "${{ needs.validate-version.outputs.version }}" > dist/version.txt
           
-          # Create Symlink Script (Linux and macOS only)
-          if [ "${{ matrix.label }}" == "Linux" ]; then
-            cat << 'EOF' > dist/install_symlinks.sh
-          #!/bin/sh
-          echo "Restoring shared library symlinks..."
-          ln -sf libcrypto.so.3 libcrypto.so
-          ln -sf libssl.so.3 libssl.so
-          EOF
-            chmod +x dist/install_symlinks.sh
-          elif [ "${{ matrix.label }}" == "macOS" ]; then
-            cat << 'EOF' > dist/install_symlinks.sh
-          #!/bin/sh
-          echo "Restoring shared library symlinks..."
-          ln -sf libcrypto.3.dylib libcrypto.dylib
-          ln -sf libssl.3.dylib libssl.dylib
-          EOF
-            chmod +x dist/install_symlinks.sh
+          # Create Symlink Script (POSIX only, if not already present)
+          if [ ! -f dist/install_symlinks.sh ]; then
+            if [ "${{ matrix.label }}" == "Linux" ]; then
+              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.so.3 libcrypto.so\nln -sf libssl.so.3 libssl.so" > dist/install_symlinks.sh
+              chmod +x dist/install_symlinks.sh
+            elif [ "${{ matrix.label }}" == "macOS" ]; then
+              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.3.dylib libcrypto.dylib\nln -sf libssl.3.dylib libssl.dylib" > dist/install_symlinks.sh
+              chmod +x dist/install_symlinks.sh
+            fi
           fi
           
           # --- Generate README ---
@@ -505,16 +510,13 @@ jobs:
           Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
           EOF
           
-          # Remove any empty directories before zipping
           find dist -type d -empty -delete
           
-          # Zip Architecture (No symlinks)
           ARCHIVE_NAME="openssl-${{ needs.validate-version.outputs.version }}-${{ matrix.label }}-${{ matrix.arch }}.zip"
           cd dist
           zip -r -y "../$ARCHIVE_NAME" .
           cd ..
           
-          # Export filename to environment for the upload step
           echo "ARCHIVE_FILE=$ARCHIVE_NAME" >> $GITHUB_ENV
 
       - name: Upload Final Archive
