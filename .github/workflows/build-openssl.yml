@@ -363,26 +363,34 @@ jobs:
           path: raw-binaries
           merge-multiple: false
 
-      - name: Debug Artifact Structure
-        run: |
-          echo "Inspecting raw-binaries structure..."
-          ls -R raw-binaries
-
-      - name: Create Base Directories
-        run: mkdir -p dist
-
       - name: Merge Binaries and Assets
         if: matrix.label != 'macOS'
         shell: bash
         run: |
-          # Merge all contents of downloaded raw artifacts into dist/
-          for d in raw-binaries/*/; do
+          # Merge contents of downloaded raw artifacts into dist/
+          # Standard behavior: download-artifact creates subdirectories named after artifacts.
+          # Flattened behavior: If only one artifact exists, it may be extracted directly.
+          
+          HAS_RAW_SUBDIRS=false
+          for d in raw-binaries/raw-*/; do
             if [ -d "$d" ]; then
-              echo "Merging $d into dist/"
-              # Using cp -R with trailing dot to merge content reliably
-              cp -R "$d". dist/
+              HAS_RAW_SUBDIRS=true
+              break
             fi
           done
+
+          if [ "$HAS_RAW_SUBDIRS" = true ]; then
+            echo "Detected nested artifact structure. Merging subdirectories..."
+            for d in raw-binaries/raw-*/; do
+              if [ -d "$d" ]; then
+                echo "Merging $d contents into dist/"
+                cp -R "$d". dist/
+              fi
+            done
+          else
+            echo "Detected flattened artifact structure. Merging raw-binaries/ directly..."
+            cp -R raw-binaries/. dist/
+          fi
 
       - name: Organize & Lipo (macOS Universal)
         if: matrix.label == 'macOS'
