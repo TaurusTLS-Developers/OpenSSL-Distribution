@@ -299,7 +299,7 @@ jobs:
             fi
           fi
           
-          find raw_artifact/dist -type d -empty -delete
+          find raw_artifact/dist -type d -empty -delete || true
 
       - name: Upload Raw Artifact
         uses: actions/upload-artifact@v7
@@ -307,7 +307,6 @@ jobs:
           name: raw-${{ matrix.platform.label }}-${{ matrix.platform.arch }}-${{ matrix.linkage }}
           path: raw_artifact/dist
           retention-days: 1
-          archive: false
 
   # =========================================================================
   # 3. PACKAGE RELEASE (Fan-In Matrix)
@@ -363,6 +362,11 @@ jobs:
           pattern: raw-macOS-*
           path: raw-binaries
           merge-multiple: false
+
+      - name: Debug Artifact Structure
+        run: |
+          echo "Inspecting raw-binaries structure..."
+          ls -R raw-binaries
 
       - name: Create Base Directories
         run: mkdir -p dist
