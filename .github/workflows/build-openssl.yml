@@ -257,20 +257,22 @@ jobs:
           
           if [ "$LINKAGE" == "shared" ]; then
             # Executable
-            [ -f "$PREFIX/bin/openssl" ] && cp "$PREFIX/bin/openssl" raw_artifact/dist/
+            find "$PREFIX/bin" -type f -name "openssl" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
             
             # Shared Libs
             if [ "$LABEL" == "Android" ]; then
-              cp "$PREFIX/lib"/*.so raw_artifact/dist/ 2>/dev/null || cp "$PREFIX/lib64"/*.so raw_artifact/dist/ 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
             else
               # Versioned libs only
-              cp "$PREFIX/lib"/*.so.3 raw_artifact/dist/ 2>/dev/null || cp "$PREFIX/lib64"/*.so.3 raw_artifact/dist/ 2>/dev/null || true
-              cp "$PREFIX/lib"/*.3.dylib raw_artifact/dist/ 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so.3" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.3.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
             fi
             
             # Engines & Providers
-            cp "$PREFIX/lib"*/engines-3/*.so raw_artifact/dist/engines/ 2>/dev/null || cp "$PREFIX/lib"*/engines-3/*.dylib raw_artifact/dist/engines/ 2>/dev/null || true
-            cp "$PREFIX/lib"*/ossl-modules/*.so raw_artifact/dist/providers/ 2>/dev/null || cp "$PREFIX/lib"*/ossl-modules/*.dylib raw_artifact/dist/providers/ 2>/dev/null || true
+            find "$PREFIX" -path "*/engines-3/*.so" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/engines-3/*.dylib" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/ossl-modules/*.so" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/ossl-modules/*.dylib" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
             
             # Stripping (Non-macOS)
             if [ "$LABEL" != "macOS" ]; then
@@ -289,7 +291,8 @@ jobs:
             
           else
             # Static linkage
-            cp "$PREFIX/lib"/*.a raw_artifact/dist/lib/static/ 2>/dev/null || cp "$PREFIX/lib64"/*.a raw_artifact/dist/lib/static/ 2>/dev/null || true
+            mkdir -p raw_artifact/dist/lib/static
+            find "$PREFIX" -type f -name "*.a" -exec cp {} raw_artifact/dist/lib/static/ \; 2>/dev/null || true
             # Stripping (Non-macOS)
             if [ "$LABEL" != "macOS" ]; then
               find raw_artifact/dist/lib/static -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
@@ -371,7 +374,8 @@ jobs:
           for d in raw-binaries/*/; do
             if [ -d "$d" ]; then
               echo "Merging $d into dist/"
-              cp -rn "$d". dist/
+              # Using cp -R with trailing dot to merge content reliably
+              cp -R "$d". dist/
             fi
           done
 
@@ -558,11 +562,11 @@ jobs:
         run: |
           echo "Fetching artifacts for run ${{ github.run_id }}..."
           
-          # Use 'gh artifact list' for reliable artifact identification
-          ARTIFACTS=$(gh artifact list --run-id ${{ github.run_id }} --limit 1000 --json name,id)
+          # Fetch all artifacts for this run
+          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
           
           # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
-          IDS=$(echo "$ARTIFACTS" | jq -r '.[] | select(.name | startswith("raw-") or . == "openssl-common-assets") | .id')
+          IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select (.name | startswith("raw-") or .name == "openssl-common-assets") | .id')
           
           if [ -z "$IDS" ] || [ "$IDS" == "null" ]; then
             echo "No intermediate artifacts found to delete."
@@ -571,7 +575,7 @@ jobs:
           
           for id in $IDS; do
             echo "Deleting artifact ID: $id"
-            gh artifact delete $id || echo "Failed to delete artifact ID: $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true # Continue even if deletion fails
           done
           
-          echo "✅ Cleanup complete."    
+          echo "✅ Cleanup complete."
