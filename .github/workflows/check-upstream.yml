@@ -52,7 +52,7 @@ jobs:
               echo "✅ Release v$VERSION already exists. Skipping."
             else
               echo "🚀 New release v$VERSION missing! Triggering build..."
-              gh workflow run build-openssl.yml -f version="$VERSION"
+              gh workflow run build-openssl.yml -f version="$VERSION" -f build_type="release"
               echo "Build triggered for $VERSION."
             fi
           done
