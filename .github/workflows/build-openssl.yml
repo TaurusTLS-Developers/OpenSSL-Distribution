@@ -49,7 +49,7 @@ jobs:
   # 0. VALIDATE VERSION & EOL
   # =========================================================================
   validate-version:
-    name: Validate ${{ inputs.build_type == 'release' && 'Version' || 'Branch' }}
+    name: Validate Inputs
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
