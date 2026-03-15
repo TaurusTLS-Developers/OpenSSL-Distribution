@@ -13,7 +13,7 @@ on:
           - branch
         default: release
       version:
-        description: 'OpenSSL Version or Branch (e.g., 3.4.0 or master)'
+        description: 'Version or Fork (e.g. 3.4.0, master, or user/repo/branch)'
         required: true
         type: string
       ignore_eol:
@@ -53,8 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      target_repo: ${{ steps.check.outputs.target_repo }}
       ref: ${{ steps.check.outputs.ref }}
       artifact_version: ${{ steps.check.outputs.artifact_version }}
+      is_fork: ${{ steps.check.outputs.is_fork }}
     steps:
       - name: Check EOL or Branch Existence
         id: check
@@ -62,6 +64,9 @@ jobs:
           VERSION="${{ inputs.version }}"
           BUILD_TYPE="${{ inputs.build_type }}"
           IGNORE_EOL="${{ inputs.ignore_eol }}"
+          
+          TARGET_REPO="openssl/openssl"
+          IS_FORK="false"
           
           if [ "$BUILD_TYPE" == "release" ]; then
             MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
@@ -80,20 +85,38 @@ jobs:
                 echo "⚠️ Ignore EOL is checked. Proceeding anyway."
               fi
             fi
-            echo "ref=openssl-$VERSION" >> $GITHUB_OUTPUT
-            echo "artifact_version=$VERSION" >> $GITHUB_OUTPUT
+            TARGET_REF="openssl-$VERSION"
+            ARTIFACT_VERSION="$VERSION"
           else
             # Branch Mode
-            echo "🔍 Verifying branch '$VERSION' in upstream repository..."
-            if ! git ls-remote --heads https://github.com/openssl/openssl.git "$VERSION" | grep -q "$VERSION"; then
-              echo "❌ Branch '$VERSION' does not exist in openssl/openssl repository."
+            if [[ "$VERSION" == */*/* ]]; then
+              # Format: user/repo/branch
+              TARGET_REPO=$(echo "$VERSION" | cut -d'/' -f1,2)
+              TARGET_REF=$(echo "$VERSION" | cut -d'/' -f3-)
+              IS_FORK="true"
+              USER_PART=$(echo "$VERSION" | cut -d'/' -f1)
+              ARTIFACT_PART="${USER_PART}_${TARGET_REF}"
+            else
+              TARGET_REF="$VERSION"
+              ARTIFACT_PART="$VERSION"
+            fi
+            
+            echo "🔍 Verifying branch/ref '$TARGET_REF' in repository '$TARGET_REPO'..."
+            if ! git ls-remote https://github.com/$TARGET_REPO.git "$TARGET_REF" | grep -q "$TARGET_REF"; then
+              echo "❌ Reference '$TARGET_REF' does not exist in $TARGET_REPO."
               exit 1
             fi
+            
             TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-            echo "ref=$VERSION" >> $GITHUB_OUTPUT
-            echo "artifact_version=${VERSION}_${TIMESTAMP}" >> $GITHUB_OUTPUT
+            # Slugify and truncate ARTIFACT_PART
+            SAFE_PART=$(echo "$ARTIFACT_PART" | sed 's/\//_/g' | cut -c 1-100)
+            ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
           fi
           
+          echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
+          echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
+          echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
+          echo "artifact_version=$ARTIFACT_VERSION" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
   # =========================================================================
@@ -106,7 +129,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: openssl/openssl
+          repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.ref }}
       
       - name: Build Common Assets
@@ -202,7 +225,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: openssl/openssl
+          repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.ref }}
 
       - name: Compile Windows (Standard)
@@ -590,7 +613,7 @@ jobs:
           retention-days: 5
 
       - name: Upload Build Metadata (Once)
-        if: matrix.label == 'Linux' && matrix.arch == 'x64'
+        if: matrix.label == 'Linux' && matrix.arch == 'x64' && needs.validate-version.outputs.is_fork == 'false'
         uses: actions/upload-artifact@v7
         with:
           name: build-metadata
@@ -615,7 +638,7 @@ jobs:
           echo "Fetching artifacts for run ${{ github.run_id }}..."
           
           # Use gh api to list artifacts
-          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
+          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/artifacts --paginate)
           
           # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
           IDS=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select (.name | startswith("raw-") or . == "openssl-common-assets") | .id')
