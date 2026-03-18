@@ -1,4 +1,4 @@
-name: Build OpenSSL 3.x
+name: Build OpenSSL
 run-name: Build OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
 
 on:
@@ -198,7 +198,7 @@ jobs:
           -----------------------------------------------
           Windows file systems fail to extract Unix symbolic links. To ensure cross-platform compatibility, this archive contains only the physical shared library files.
           
-          If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.3).
+          If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.X).
           
           $ cd <extracted_directory>
           $ sh ./install_symlinks.sh
@@ -389,14 +389,16 @@ jobs:
             if [ "$LABEL" == "Android" ]; then
               find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
             else
-              # Versioned libs only
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so.3" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.3.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
+              # Versioned libs only: libcrypto.so.X, libssl.so.X or libcrypto.X.dylib, libssl.X.dylib
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.so.*" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.so.*" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.*.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
+              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.*.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
             fi
             
             # Engines & Providers
-            find "$PREFIX" -path "*/engines-3/*.so" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/engines-3/*.dylib" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/engines-*/*.so" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/engines-*/*.dylib" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
             find "$PREFIX" -path "*/ossl-modules/*.so" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
             find "$PREFIX" -path "*/ossl-modules/*.dylib" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
             
@@ -407,12 +409,26 @@ jobs:
             fi
             
             # Symlinks script (Linux/macOS)
-            if [ "$LABEL" == "Linux" ]; then
-              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.so.3 libcrypto.so\nln -sf libssl.so.3 libssl.so" > raw_artifact/dist/install_symlinks.sh
-              chmod +x raw_artifact/dist/install_symlinks.sh
-            elif [ "$LABEL" == "macOS" ]; then
-              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.3.dylib libcrypto.dylib\nln -sf libssl.3.dylib libssl.dylib" > raw_artifact/dist/install_symlinks.sh
-              chmod +x raw_artifact/dist/install_symlinks.sh
+            if [ "$LABEL" == "Linux" ] || [ "$LABEL" == "macOS" ]; then
+              echo "#!/bin/sh" > raw_artifact/dist/install_symlinks.sh
+              echo "echo \"Restoring shared library symlinks...\"" >> raw_artifact/dist/install_symlinks.sh
+              
+              cd raw_artifact/dist
+              for lib in libcrypto libssl; do
+                if [ "$LABEL" == "Linux" ]; then
+                  REAL_FILE=$(ls ${lib}.so.* 2>/dev/null | head -n 1)
+                  if [ -n "$REAL_FILE" ]; then
+                    echo "ln -sf $REAL_FILE ${lib}.so" >> install_symlinks.sh
+                  fi
+                else
+                  REAL_FILE=$(ls ${lib}.*.dylib 2>/dev/null | head -n 1)
+                  if [ -n "$REAL_FILE" ]; then
+                    echo "ln -sf $REAL_FILE ${lib}.dylib" >> install_symlinks.sh
+                  fi
+                fi
+              done
+              chmod +x install_symlinks.sh
+              cd - > /dev/null
             fi
             
           else
@@ -612,12 +628,26 @@ jobs:
           
           # Create Symlink Script (POSIX only, if not already present)
           if [ ! -f dist/install_symlinks.sh ]; then
-            if [ "${{ matrix.label }}" == "Linux" ]; then
-              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.so.3 libcrypto.so\nln -sf libssl.so.3 libssl.so" > dist/install_symlinks.sh
-              chmod +x dist/install_symlinks.sh
-            elif [ "${{ matrix.label }}" == "macOS" ]; then
-              echo -e "#!/bin/sh\necho \"Restoring shared library symlinks...\"\nln -sf libcrypto.3.dylib libcrypto.dylib\nln -sf libssl.3.dylib libssl.dylib" > dist/install_symlinks.sh
-              chmod +x dist/install_symlinks.sh
+            if [ "${{ matrix.label }}" == "Linux" ] || [ "${{ matrix.label }}" == "macOS" ]; then
+              echo "#!/bin/sh" > dist/install_symlinks.sh
+              echo "echo \"Restoring shared library symlinks...\"" >> dist/install_symlinks.sh
+              
+              cd dist
+              for lib in libcrypto libssl; do
+                if [ "${{ matrix.label }}" == "Linux" ]; then
+                  REAL_FILE=$(ls ${lib}.so.* 2>/dev/null | head -n 1)
+                  if [ -n "$REAL_FILE" ]; then
+                    echo "ln -sf $REAL_FILE ${lib}.so" >> install_symlinks.sh
+                  fi
+                else
+                  REAL_FILE=$(ls ${lib}.*.dylib 2>/dev/null | head -n 1)
+                  if [ -n "$REAL_FILE" ]; then
+                    echo "ln -sf $REAL_FILE ${lib}.dylib" >> install_symlinks.sh
+                  fi
+                fi
+              done
+              chmod +x install_symlinks.sh
+              cd - > /dev/null
             fi
           fi
           

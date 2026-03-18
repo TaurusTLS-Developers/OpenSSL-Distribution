@@ -34,7 +34,7 @@ The pipeline consists of three primary workflows:
 ## 🛠️ Manual Operations
 
 ### How to build manually
-1.  Go to **Actions** tab -> **Build OpenSSL 3.x**.
+1. Go to **Actions** tab -> **Build OpenSSL**.
 2.  Click **Run workflow**.
 3.  **Build Source:** 
     *   Select `release` for official OpenSSL releases (tags).

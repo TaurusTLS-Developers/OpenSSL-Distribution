@@ -34,15 +34,15 @@ When redistributing OpenSSL alongside your application, you only need to deploy 
 
 #### 🔴 REQUIRED (Must be deployed)
 These files are strictly required for your application to run and to comply with licensing.
-*   **`libcrypto`** shared library (e.g., `libcrypto-3-x64.dll`, `libcrypto.so.3`, `libcrypto.3.dylib`)
-*   **`libssl`** shared library (e.g., `libssl-3-x64.dll`, `libssl.so.3`, `libssl.3.dylib`)
+*   **`libcrypto`** shared library (e.g., `libcrypto-X-x64.dll`, `libcrypto.so.X`, `libcrypto.X.dylib`)
+*   **`libssl`** shared library (e.g., `libssl-X-x64.dll`, `libssl.so.X`, `libssl.X.dylib`)
 *   **`LICENSE.txt`** (Required by the Apache License 2.0)
 
 #### 🟡 OPTIONAL (Deploy only if needed)
 Include these only if your application explicitly relies on them.
 *   **`openssl` / `openssl.exe`** (The standalone command-line utility)
 *   **`engines/`** (Legacy hardware/engine support modules)
-*   **`providers/`** (OpenSSL 3.x provider modules, such as `legacy.dll` / `legacy.so`)
+*   **`providers/`** (OpenSSL provider modules, such as `legacy.dll` / `legacy.so`)
 
 #### ⛔ DO NOT DEPLOY (Development only)
 These files are for compiling/linking your software and should **not** be shipped to end-users.
@@ -54,7 +54,7 @@ These files are for compiling/linking your software and should **not** be shippe
 #### 🐧 POSIX Specifics (Linux / macOS / Unix)
 Windows file systems often fail to extract Unix symbolic links. To ensure cross-platform compatibility, our archives contain **only the physical shared library files** (no symlinks).
 
-If your package includes the `install_symlinks.sh` script, you **MUST** run it from the root of the extracted directory on your target POSIX system to recreate the required library symlinks (e.g., `libcrypto.so` -> `libcrypto.so.3`).
+If your package includes the `install_symlinks.sh` script, you **MUST** run it from the root of the extracted directory on your target POSIX system to recreate the required library symlinks (e.g., `libcrypto.so` -> `libcrypto.so.X`).
 
 ```bash
 $ cd <extracted_directory>
