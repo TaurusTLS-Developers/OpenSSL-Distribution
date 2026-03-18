@@ -307,8 +307,8 @@ jobs:
             mkdir raw_artifact\dist\lib\import
             copy "%PREFIX%\bin\openssl.exe" raw_artifact\dist\
             copy "%PREFIX%\bin\*.dll" raw_artifact\dist\
-            copy "%PREFIX%\lib\engines-3\*.dll" raw_artifact\dist\engines\
-            copy "%PREFIX%\lib\ossl-modules\*.dll" raw_artifact\dist\providers\
+            for /d %%d in ("%PREFIX%\lib\engines-*") do copy "%%d\*.dll" raw_artifact\dist\engines\
+            for /d %%d in ("%PREFIX%\lib\ossl-modules*") do copy "%%d\*.dll" raw_artifact\dist\providers\
             copy "%PREFIX%\lib\*.lib" raw_artifact\dist\lib\import\
           ) else (
             mkdir raw_artifact\dist\lib\static
@@ -397,8 +397,8 @@ jobs:
             # Engines & Providers
             find "$PREFIX" -path "*/engines-*/*.so" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
             find "$PREFIX" -path "*/engines-*/*.dylib" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/ossl-modules/*.so" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/ossl-modules/*.dylib" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/ossl-modules*/*.so" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
+            find "$PREFIX" -path "*/ossl-modules*/*.dylib" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
             
             # Stripping (Non-macOS)
             if [ "$LABEL" != "macOS" ]; then
