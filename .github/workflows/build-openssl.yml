@@ -134,9 +134,7 @@ jobs:
             ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
           fi
           
-          # Dynamically update the Run Name for better visibility in UI
-          gh run edit ${{ github.run_id }} --name "Build OpenSSL $SLUGIFIED_VERSION via ${{ github.event_name }}" || true
-          
+          # Output resolved information
           echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
           echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
           echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
