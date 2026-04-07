@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * *' # Runs daily at midnight UTC
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Check for new releases but do not trigger builds'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -16,43 +22,82 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - name: Fetch Active OpenSSL Versions
-        id: fetch_versions
+      - name: Fetch Active OpenSSL Cycles
+        id: fetch_cycles
         run: |
-          echo "Fetching active OpenSSL versions from endoflife.date API..."
-          CURRENT_DATE=$(date +%Y-%m-%d)
+          echo "Fetching active OpenSSL cycles from OpenSSL Org..."
+          METADATA=$(curl -s https://raw.githubusercontent.com/openssl/release-metadata/refs/heads/main/data.json)
           
-          # Fetch all active 'latest' versions (where EOL date is greater than today, or EOL is false)
-          # We also filter to only include 3.x versions
-          ACTIVE_VERSIONS=$(curl -s https://endoflife.date/api/openssl.json | jq -r --arg now "$CURRENT_DATE" 'map(select((.eol == false or .eol > $now) and (.cycle | startswith("3.")))) | .[].latest')
+          # Get all cycle keys (e.g. 3.0, 3.4, 4.0)
+          CYCLES=$(echo "$METADATA" | jq -r 'keys[]')
+          NOW=$(date +%s)
           
-          if [ -z "$ACTIVE_VERSIONS" ]; then
-            echo "::info::No new OpenSSL Releases identified."
-            exit 0
+          ACTIVE_CYCLES=""
+          for cycle in $CYCLES; do
+            EOL_DATE=$(echo "$METADATA" | jq -r ".[\"$cycle\"].eol")
+            
+            # Determine if active based on EOL date
+            if [ -z "$EOL_DATE" ] || [ "$EOL_DATE" == "null" ] || [ "$EOL_DATE" == "" ]; then
+              IS_ACTIVE=true
+            else
+              # Try to parse the date format (e.g., "07 Sep 2026" or "May 2027")
+              # Use 01 prefix for month-year formats
+              EOL_TS=$(date -d "$EOL_DATE" +%s 2>/dev/null || date -d "01 $EOL_DATE" +%s 2>/dev/null || echo 0)
+              if [ "$EOL_TS" -ge "$NOW" ]; then
+                IS_ACTIVE=true
+              else
+                IS_ACTIVE=false
+              fi
+            fi
+            
+            if [ "$IS_ACTIVE" == "true" ]; then
+              ACTIVE_CYCLES="$ACTIVE_CYCLES $cycle"
+            fi
+          done
+          
+          if [ -z "$ACTIVE_CYCLES" ]; then
+            echo "::error::No active OpenSSL cycles identified in data.json"
+            exit 1
           fi
           
-          # Convert multi-line string to a space-separated string for easier looping
-          ACTIVE_VERSIONS_FLAT=$(echo "$ACTIVE_VERSIONS" | tr '\n' ' ')
-          echo "Active OpenSSL versions: $ACTIVE_VERSIONS_FLAT"
-          
-          echo "versions=$ACTIVE_VERSIONS_FLAT" >> $GITHUB_OUTPUT
+          echo "Active cycles identifies: $ACTIVE_CYCLES"
+          echo "cycles=$ACTIVE_CYCLES" >> $GITHUB_OUTPUT
 
-      - name: Check Local Releases and Trigger Builds
+      - name: Check Upstream Tags and Trigger Builds
         env:
           GH_TOKEN: ${{ secrets.RBPW_PAT }}
+          SOURCE_REPO: "https://github.com/openssl/openssl.git"
         run: |
-          VERSIONS="${{ steps.fetch_versions.outputs.versions }}"
+          CYCLES="${{ steps.fetch_cycles.outputs.cycles }}"
           
-          for VERSION in $VERSIONS; do
+          for cycle in $CYCLES; do
             echo "----------------------------------------"
-            echo "Checking version: $VERSION"
+            echo "Checking OpenSSL cycle: $cycle"
             
-            # Check if we already have a release for this exact version
+            # Find the latest tag for this cycle using ls-remote
+            # OpenSSL tags follow 'openssl-<version>' pattern
+            LATEST_TAG=$(git ls-remote --tags "$SOURCE_REPO" "openssl-${cycle}.*" | awk -F/ '{print $3}' | grep -v "\^{}" | sort -V | tail -n1)
+            
+            if [ -z "$LATEST_TAG" ]; then
+              echo "⚠️ No tags found matching openssl-${cycle}.* skipping."
+              continue
+            fi
+            
+            VERSION=${LATEST_TAG#openssl-}
+            echo "Latest version in upstream: $VERSION"
+            
+            # Check if we already have a release for this exact version in OUR repository
+            # We use 'v$VERSION' as our release tag convention
             if gh release view "v$VERSION" > /dev/null 2>&1; then
               echo "✅ Release v$VERSION already exists. Skipping."
             else
-              echo "🚀 New release v$VERSION missing! Triggering build..."
-              gh workflow run build-openssl.yml -f version="$VERSION" -f build_type="release"
-              echo "Build triggered for $VERSION."
+              echo "🚀 New release v$VERSION missing!"
+              if [ "${{ inputs.dry_run }}" == "true" ]; then
+                echo "⚠️ Dry run enabled. Skipping build trigger."
+              else
+                echo "Triggering build workflow..."
+                gh workflow run build-openssl.yml -f version="$VERSION" -f build_type="release"
+                echo "Build triggered for $VERSION."
+              fi
             fi
           done
