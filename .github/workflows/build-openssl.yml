@@ -285,7 +285,7 @@ jobs:
           
           :: --- SHARED BUILD ---
           if "${{ matrix.linkage }}"=="shared" (
-            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /nodefaultlib:libucrt.lib /defaultlib:ucrt.lib /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           )
           
           :: --- STATIC BUILD ---
