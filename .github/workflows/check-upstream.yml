@@ -76,7 +76,7 @@ jobs:
             
             # Find the latest tag for this cycle using ls-remote
             # OpenSSL tags follow 'openssl-<version>' pattern
-            LATEST_TAG=$(git ls-remote --tags "$SOURCE_REPO" "openssl-${cycle}.*" | awk -F/ '{print $3}' | grep -v "\^{}" | sort -V | tail -n1)
+            LATEST_TAG=$(git ls-remote --tags "$SOURCE_REPO" "openssl-${cycle}.*" | awk -F/ '{print $3}' | grep -P "openssl-\d{1,}.\d{1,}.\d{1,}$" | sort -V | tail -n1)
             
             if [ -z "$LATEST_TAG" ]; then
               echo "⚠️ No tags found matching openssl-${cycle}.* skipping."
