@@ -264,12 +264,12 @@ jobs:
           
           :: --- SHARED BUILD ---
           if "${{ matrix.linkage }}"=="shared" (
-            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests "CFLAGS=-D_WIN32_WINNT=0x0A00" 
+            perl Configure %TARGET% --prefix="%PREFIX%" shared no-makedepend no-tests no-docs "CFLAGS=-D_WIN32_WINNT=0x0A00" 
           )
           
           :: --- STATIC BUILD ---
           if "${{ matrix.linkage }}"=="static" (
-            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests "CFLAGS=-D_WIN32_WINNT=0x0A00" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests "CFLAGS=-D_WIN32_WINNT=0x0A00"
+            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-makedepend no-tests no-docs "CFLAGS=-D_WIN32_WINNT=0x0A00" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-makedepend no-tests no-docs "CFLAGS=-D_WIN32_WINNT=0x0A00"
           )
           
           nmake && nmake install_sw
@@ -285,12 +285,12 @@ jobs:
           
           :: --- SHARED BUILD ---
           if "${{ matrix.linkage }}"=="shared" (
-            perl Configure %TARGET% --prefix="%PREFIX%" shared no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /nodefaultlib:libucrt.lib /defaultlib:ucrt.lib /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+            perl Configure %TARGET% --prefix="%PREFIX%" shared no-makedepend no-tests no-docs no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00" "LDFLAGS=/MACHINE:ARM64EC /nodefaultlib:libucrt.lib /defaultlib:ucrt.lib /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           )
           
           :: --- STATIC BUILD ---
           if "${{ matrix.linkage }}"=="static" (
-            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-module no-tests no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
+            perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-makedepend no-tests no-docs no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC" || perl Configure %TARGET% --prefix="%PREFIX%" no-shared no-apps no-module no-makedepend no-tests no-docs no-asm "CFLAGS=/nologo /arm64EC /O1 /Zi /D_WIN32_WINNT=0x0A00 /MD" "LDFLAGS=/MACHINE:ARM64EC /DEBUG" "ARFLAGS=/MACHINE:ARM64EC"
           )
           
           nmake && nmake install_sw
