@@ -57,3 +57,47 @@ jobs:
         run: |
           Write-Host "Successfully logged in to Azure! Verifying active subscription info..."
           az account show --output json
+
+      - name: Create Sample Windows Binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\test_bin"
+          Copy-Item "C:\Windows\System32\notepad.exe" "${{ github.workspace }}\test_bin\testapp.exe"
+          Copy-Item "C:\Windows\System32\kernel32.dll" "${{ github.workspace }}\test_bin\testlib.dll"
+          Write-Host "Staged test executable and DLL in ${{ github.workspace }}\test_bin"
+
+      - name: Sign Windows Binaries (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\test_bin
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Windows Binaries
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\test_bin" -Recurse -Include *.exe,*.dll
+          $failed = $false
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  StatusMessage: $($sig.StatusMessage)"
+            if ($sig.SignerCertificate) {
+              Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+              Write-Host "  Issuer: $($sig.SignerCertificate.Issuer)"
+            }
+            if ($sig.Status -ne 'Valid') {
+              Write-Error "Signature status for $($file.Name) is invalid: $($sig.Status)"
+              $failed = $true
+            }
+          }
+          if ($failed) {
+            exit 1
+          }
