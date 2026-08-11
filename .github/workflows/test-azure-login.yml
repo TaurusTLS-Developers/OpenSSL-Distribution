@@ -11,10 +11,12 @@ jobs:
     name: Test Azure Access
     runs-on: windows-latest
     steps:
-      - name: Debug Context Variables
+      - name: Debug Context Variables (Windows/PowerShell)
         run: |
-          echo "Target Tenant ID starts with: ${ENV_TENANT:0:5}..."
-          echo "Target Subscription ID starts with: ${ENV_SUB:0:5}..."
+          # In PowerShell, env variables use the $env:Name syntax
+          # The .Substring(start, length) method safely isolates characters
+          Write-Output "Target Tenant ID starts with: $($env:ENV_TENANT.Substring(0,5))..."
+          Write-Output "Target Subscription ID starts with: $($env:ENV_SUB.Substring(0,5))..."
         env:
           ENV_TENANT: ${{ secrets.AZURE_TENANT_ID }}
           ENV_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
