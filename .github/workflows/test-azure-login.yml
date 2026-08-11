@@ -1,0 +1,38 @@
+name: Test Azure Login & Signing Access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-azure:
+    name: Test Azure Access
+    runs-on: windows-latest
+    steps:
+      - name: Validate Azure Code Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}')) { $missing += "AZURE_CLIENT_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}')) { $missing += "AZURE_CLIENT_SECRET" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}')) { $missing += "AZURE_TENANT_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}')) { $missing += "AZURE_SUBSCRIPTION_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}')) { $missing += "AZURE_SIGNING_ACCOUNT_NAME" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += "AZURE_CERTIFICATE_PROFILE_NAME" }
+          
+          if ($missing.Count -gt 0) {
+            Write-Error "Required Azure Code Signing secret(s) missing: $($missing -join ', ')"
+            exit 1
+          } else {
+            Write-Host "All required Azure secrets are populated!"
+          }
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Verify Azure CLI Access
+        shell: pwsh
+        run: |
+          Write-Host "Successfully logged in to Azure! Verifying active subscription info..."
+          az account show --output json
