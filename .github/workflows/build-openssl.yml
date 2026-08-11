@@ -250,6 +250,23 @@ jobs:
           repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.sha }}
 
+      - name: Validate Azure Code Signing Secrets
+        if: matrix.platform.label == 'Windows'
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}')) { $missing += "AZURE_CLIENT_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}')) { $missing += "AZURE_CLIENT_SECRET" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}')) { $missing += "AZURE_TENANT_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}')) { $missing += "AZURE_SUBSCRIPTION_ID" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}')) { $missing += "AZURE_SIGNING_ACCOUNT_NAME" }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += "AZURE_CERTIFICATE_PROFILE_NAME" }
+          
+          if ($missing.Count -gt 0) {
+            Write-Error "Required Azure Code Signing secret(s) missing: $($missing -join ', ')"
+            exit 1
+          }
+
       - name: Prepare Windows Targets
         if: matrix.platform.label == 'Windows'
         shell: bash
@@ -399,6 +416,57 @@ jobs:
           ) else (
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
           )
+
+      - name: Azure Login
+        if: matrix.platform.label == 'Windows'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows Binaries (Azure Artifact Signing)
+        if: matrix.platform.label == 'Windows'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\raw_artifact\dist
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Windows Binaries
+        if: matrix.platform.label == 'Windows'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_artifact\dist" -Recurse -Include *.exe,*.dll
+          if ($files.Count -eq 0) {
+            Write-Host "No .exe or .dll files found to verify."
+            exit 0
+          }
+          $failed = $false
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  StatusMessage: $($sig.StatusMessage)"
+            if ($sig.SignerCertificate) {
+              Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+              Write-Host "  Issuer: $($sig.SignerCertificate.Issuer)"
+            }
+            if ($sig.Status -ne 'Valid') {
+              Write-Error "Signature status for $($file.Name) is invalid: $($sig.Status)"
+              $failed = $true
+            }
+          }
+          if ($failed) {
+            exit 1
+          }
 
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
