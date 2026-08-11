@@ -17,9 +17,17 @@ jobs:
           # The .Substring(start, length) method safely isolates characters
           Write-Output "Target Tenant ID starts with: $($env:ENV_TENANT.Substring(0,5))..."
           Write-Output "Target Subscription ID starts with: $($env:ENV_SUB.Substring(0,5))..."
+          Write-Output "Target Client ID starts with: $($env:ENV_CLIENT.Substring(0,5))..."
+          Write-Output "Target Client Secret starts with: $($env:ENV_CLIENT_SECRET.Substring(0,5))..."
+          Write-Output "Target Signing Account Name starts with: $($env:ENV_SIGNING_ACCOUNT_NAME.Substring(0,5))..."
+          Write-Output "Target Certificate Profile Name starts with: $($env:ENV_CERTIFICATE_PROFILE_NAME.Substring(0,5))..."
         env:
           ENV_TENANT: ${{ secrets.AZURE_TENANT_ID }}
           ENV_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ENV_CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+          ENV_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ENV_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          ENV_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
       
       - name: Validate Azure Code Signing Secrets
         shell: pwsh
