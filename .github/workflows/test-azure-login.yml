@@ -1,8 +1,11 @@
 name: Test Azure Login & Signing Access
 
 on:
+  push:
+    branches:
+      - azure-signing
   workflow_dispatch:
-
+    
 jobs:
   test-azure:
     name: Test Azure Access
