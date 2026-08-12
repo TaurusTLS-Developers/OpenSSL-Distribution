@@ -86,6 +86,14 @@ $ sh ./install_symlinks.sh
 | **Android** | ARM64, x64 | Shared & Static | Built against recent NDK. |
 | **iOS** | ARM64 | Static Only | For linking into iOS Apps. |
 
+## 🔐 Windows Digital Signatures
+
+To ensure the integrity and authenticity of the binaries distributed in this repository, all Windows dynamic-link libraries (`.dll`) and the `openssl.exe` command-line utility are digitally signed.
+
+*   **Signer Name:** `J. Peter Mugaas`
+*   **Key Benefits:** 
+    *   **Tamper Verification:** Verifies that the files have not been modified or corrupted since their automated compilation.
+    *   **Reduced False Positives:** Significantly reduces the likelihood of false-positive warnings from Windows SmartScreen or antivirus software during installation and deployment.
 
 ## License
 
