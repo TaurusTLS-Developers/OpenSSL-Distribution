@@ -420,14 +420,28 @@ jobs:
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
           )
 
-      - name: Azure Login
+      - name: Check for Windows Binaries to Sign
         if: matrix.platform.label == 'Windows'
+        id: check_binaries
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_artifact\dist" -Recurse -Include *.exe,*.dll
+          if ($files.Count -gt 0) {
+            Write-Host "Found $($files.Count) binary file(s) to sign."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=true"
+          } else {
+            Write-Host "No .exe or .dll files found to sign."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=false"
+          }
+
+      - name: Azure Login
+        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v2
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       - name: Sign Windows Binaries (Azure Artifact Signing)
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -441,7 +455,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify Signed Windows Binaries
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
         run: |
           $files = Get-ChildItem -Path "${{ github.workspace }}\raw_artifact\dist" -Recurse -Include *.exe,*.dll
