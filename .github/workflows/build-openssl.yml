@@ -721,14 +721,14 @@ jobs:
           # Substitute template parameters
           $templatePath = "$wsDir\config\openssl-installer.iss.template"
           $outFilename  = "openssl-$version-Windows-installer"
-          $iss = (Get-Content $templatePath -Raw) `
-            .Replace('{{APP_ID}}', "{$appId}") `
-            .Replace('{{VERSION}}', $version) `
-            .Replace('{{APP_PUBLISHER}}', $pubName) `
-            .Replace('{{APP_PUBLISHER_URL}}', $pubUrl) `
-            .Replace('{{OUTPUT_DIR}}', "$wsDir\installers") `
-            .Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename) `
-            .Replace('{{REDIST_DIR}}', $redistDir)
+          $iss = (Get-Content $templatePath -Raw) 
+          $xml = $xml.Replace('{{APP_ID}}', "{$appId}") 
+          $xml = $xml.Replace('{{VERSION}}', $version) 
+          $xml = $xml.Replace('{{APP_PUBLISHER}}', $pubName) 
+          $xml = $xml.Replace('{{APP_PUBLISHER_URL}}', $pubUrl) 
+          $xml = $xml.Replace('{{OUTPUT_DIR}}', "$wsDir\installers") 
+          $xml = $xml.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename) 
+          $xml = $xml.Replace('{{REDIST_DIR}}', $redistDir)
 
           $issPath = "$wsDir\openssl-installer.iss"
           [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
@@ -917,13 +917,13 @@ jobs:
             }
 
             # Substitute AppxManifest template
-            $xml = (Get-Content $templatePath -Raw) `
-              .Replace('{{MSIX_PUBLISHER}}', $publisher) `
-              .Replace('{{MSIX_VERSION}}', $msixVer) `
-              .Replace('{{MSIX_ARCH}}', $mArch) `
-              .Replace('{{VERSION}}', $version) `
-              .Replace('{{ARCH}}', $pArch) `
-              .Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
+            $xml = (Get-Content $templatePath -Raw)
+            $xml = $xml.Replace('{{MSIX_PUBLISHER}}', $publisher)
+            $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
+            $xml = $xml.Replace('{{MSIX_ARCH}}', $mArch)
+            $xml = $xml.Replace('{{VERSION}}', $version)
+            $xml = $xml.Replace('{{ARCH}}', $pArch)
+            $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
 
             [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
 
