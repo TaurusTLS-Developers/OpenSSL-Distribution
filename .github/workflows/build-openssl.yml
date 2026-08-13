@@ -975,21 +975,19 @@ jobs:
           }
           if ($failed) { exit 1 }
 
-      - name: Upload MSIX Installer
+      - name: Upload Raw MSIX Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msix
+          name: raw-installer-msix-${{ matrix.arch }}-${{ github.run_id }}
           path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
-          archive: false
-          retention-days: 5
+          retention-days: 7
 
-      - name: Upload InnoSetup Installer
+      - name: Upload Raw InnoSetup Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-installer
+          name: raw-installer-exe-${{ matrix.arch }}-${{ github.run_id }}
           path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}-installer.exe
-          archive: false
-          retention-days: 5
+          retention-days: 7
 
   # =========================================================================
   # 4. PACKAGE RELEASE (Fan-In Matrix)
@@ -997,7 +995,8 @@ jobs:
 
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs: [validate-version, build-common-assets, compile-binaries, build-windows-installers]
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     strategy:
       fail-fast: false
       matrix:
@@ -1224,6 +1223,31 @@ jobs:
         with:
           name: build-metadata
           path: dist/version.txt
+          retention-days: 5
+      - name: Download Windows Installers
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: raw-installer-*-${{ matrix.arch }}-${{ github.run_id }}
+          path: installers
+          merge-multiple: true
+
+      - name: Upload Final MSIX Installer
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msix
+          path: installers/openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
+          archive: false
+          retention-days: 5
+
+      - name: Upload Final InnoSetup Installer
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-installer
+          path: installers/openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}-installer.exe
+          archive: false
           retention-days: 5
 
   # =========================================================================
