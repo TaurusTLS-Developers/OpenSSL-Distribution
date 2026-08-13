@@ -956,7 +956,8 @@ jobs:
       - name: Verify Signed Installers
         shell: pwsh
         run: |
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers" -Include *.exe,*.msix
+          # Added \* to the path so PowerShell's -Include parameter works correctly
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.exe,*.msix
           if ($files.Count -eq 0) { Write-Error 'No installer files found to verify.'; exit 1 }
           $failed = $false
           foreach ($file in $files) {
