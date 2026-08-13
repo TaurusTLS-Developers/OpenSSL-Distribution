@@ -1,4 +1,4 @@
-; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
+; OpenSSL {{VERSION}} Multi-Architecture Windows Installer (Runtime Only)
 [Setup]
 AppId={{APP_ID}}
 AppName=OpenSSL {{VERSION}}
@@ -20,36 +20,50 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 
+[Types]
+Name: "standard"; Description: "Standard Installation"
+
+[Components]
+Name: "native";    Description: "Native OpenSSL Runtime (64-bit on x64/ARM64, 32-bit on x86)"; Types: standard; Flags: fixed
+Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime (installs to %ProgramFiles(x86)%)"; Check: Is64BitInstallMode
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: addtopath; Description: "Add OpenSSL directory to &PATH"; GroupDescription: "Additional tasks:"; Flags: unchecked
+Name: addtopath; Description: "Add OpenSSL directory to system &PATH"; Components: native
 
 [Files]
-; License (Common)
+; License
 Source: "{{REDIST_DIR}}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
-; --- x86 (32-bit) Files ---
-Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
-Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
-Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
-Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: not Is64BitInstallMode
-Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: not Is64BitInstallMode
+; --- Native x86 Files (installed to %ProgramFiles%\OpenSSL-{version} on 32-bit Windows OS) ---
+Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
 
-; --- x64 (64-bit) Files ---
-Source: "{{REDIST_DIR}}\x64\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
-Source: "{{REDIST_DIR}}\x64\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
-Source: "{{REDIST_DIR}}\x64\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
-Source: "{{REDIST_DIR}}\x64\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsX64
-Source: "{{REDIST_DIR}}\x64\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsX64
+; --- Native x64 Files (installed to %ProgramFiles%\OpenSSL-{version} on 64-bit x64 Windows OS) ---
+Source: "{{REDIST_DIR}}\x64\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64
 
-; --- ARM64EC (ARM64) Files ---
-Source: "{{REDIST_DIR}}\arm64ec\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
-Source: "{{REDIST_DIR}}\arm64ec\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
-Source: "{{REDIST_DIR}}\arm64ec\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
-Source: "{{REDIST_DIR}}\arm64ec\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsARM64
-Source: "{{REDIST_DIR}}\arm64ec\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsARM64
+; --- Native ARM64EC Files (installed to %ProgramFiles%\OpenSSL-{version} on 64-bit ARM64 Windows OS) ---
+Source: "{{REDIST_DIR}}\arm64ec\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: native; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsARM64
+
+; --- 32-bit (x86) Compatibility Files (installed to %ProgramFiles(x86)%\OpenSSL-{version} on 64-bit Windows OS) ---
+Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{autopf32}\OpenSSL-{{VERSION}}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{autopf32}\OpenSSL-{{VERSION}}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{autopf32}\OpenSSL-{{VERSION}}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{autopf32}\OpenSSL-{{VERSION}}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{autopf32}\OpenSSL-{{VERSION}}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
 
 [Icons]
 Name: "{group}\OpenSSL {{VERSION}}"; Filename: "{app}\openssl.exe"
