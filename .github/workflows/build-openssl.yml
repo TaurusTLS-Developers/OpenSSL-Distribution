@@ -722,7 +722,7 @@ jobs:
           $templatePath = "$wsDir\config\openssl-installer.iss.template"
           $outFilename  = "openssl-$version-Windows-installer"
           $iss = (Get-Content $templatePath -Raw)
-          $iss = $iss.Replace('{{APP_ID}}', "{$appId}")
+          $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
           $iss = $iss.Replace('{{VERSION}}', $version)
           $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
           $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
