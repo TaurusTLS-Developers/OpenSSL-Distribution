@@ -619,7 +619,7 @@ jobs:
   # 3a. BUILD WINDOWS MULTI-ARCH INSTALLER — Release Builds Only
   # =========================================================================
   InnoSetup-windows-installer:
-    name: Windows Multi-Arch Installer
+    name: Inno Setup Windows Multi-Arch Installer
     needs: [validate-version, build-common-assets, compile-binaries]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     runs-on: windows-latest
@@ -721,14 +721,14 @@ jobs:
           # Substitute template parameters
           $templatePath = "$wsDir\config\openssl-installer.iss.template"
           $outFilename  = "openssl-$version-Windows-installer"
-          $iss = (Get-Content $templatePath -Raw) 
-          $xml = $xml.Replace('{{APP_ID}}', "{$appId}") 
-          $xml = $xml.Replace('{{VERSION}}', $version) 
-          $xml = $xml.Replace('{{APP_PUBLISHER}}', $pubName) 
-          $xml = $xml.Replace('{{APP_PUBLISHER_URL}}', $pubUrl) 
-          $xml = $xml.Replace('{{OUTPUT_DIR}}', "$wsDir\installers") 
-          $xml = $xml.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename) 
-          $xml = $xml.Replace('{{REDIST_DIR}}', $redistDir)
+          $iss = (Get-Content $templatePath -Raw)
+          $iss = $iss.Replace('{{APP_ID}}', "{$appId}")
+          $iss = $iss.Replace('{{VERSION}}', $version)
+          $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
+          $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
+          $iss = $iss.Replace('{{OUTPUT_DIR}}', "$wsDir\installers")
+          $iss = $iss.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename)
+          $iss = $iss.Replace('{{REDIST_DIR}}', $redistDir)
 
           $issPath = "$wsDir\openssl-installer.iss"
           [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
@@ -936,7 +936,7 @@ jobs:
           # Bundle all individual .msix packages into single .msixbundle
           New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
           $bundleOut = "$wsDir\installers\openssl-$version-Windows.msixbundle"
-          & $makeAppx bundle /d "$wsDir\msix-packages" /p $bundleOut /nv
+          & $makeAppx bundle /d "$wsDir\msix-packages" /p $bundleOut /o
           if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx bundle failed (exit $LASTEXITCODE)"; exit 1 }
           Write-Host "✅ MSIX Bundle created: $bundleOut"
 
