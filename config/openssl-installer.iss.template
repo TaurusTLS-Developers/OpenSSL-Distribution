@@ -7,6 +7,28 @@ AppVerName=OpenSSL {{VERSION}}
 AppPublisher={{APP_PUBLISHER}}
 AppPublisherURL={{APP_PUBLISHER_URL}}
 VersionInfoVersion={{VERSION}}
+DefaultDirName={autopf}\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}
+DefaultGroupName=OpenSSL {{VERSION}}
+AllowNoIcons=yes
+OutputDir={{OUTPUT_DIR}}
+OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
+Compression=lzma2/ultra64
+SolidCompression=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline dialog
+DisableProgramGroupPage=yes
+WizardStyle=modern
+ArchitecturesInstallIn64BitMode=x64compatible arm64
+
+; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
+[Setup]
+AppId={{APP_ID}}
+AppName=OpenSSL {{VERSION}}
+AppVersion={{VERSION}}
+AppVerName=OpenSSL {{VERSION}}
+AppPublisher={{APP_PUBLISHER}}
+AppPublisherURL={{APP_PUBLISHER_URL}}
+VersionInfoVersion={{VERSION}}
 DefaultDirName={autopf}\{{PUBLISHER_DISPLAY_NAME}}\OpenSSL-{{VERSION}}
 DefaultGroupName=OpenSSL {{VERSION}}
 AllowNoIcons=yes
@@ -21,11 +43,13 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 
 [Types]
-Name: "standard"; Description: "Standard Installation"
+Name: "standard"; Description: "Standard Installation (Native Architecture Only)"
+Name: "full";     Description: "Full Installation (Native + 32-bit x86 Compatibility)"
+Name: "custom";   Description: "Custom Installation"; Flags: iscustom
 
 [Components]
-Name: "native";    Description: "Native OpenSSL Runtime (64-bit on x64/ARM64, 32-bit on x86)"; Types: standard; Flags: fixed
-Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime (installs to %ProgramFiles(x86)%)"; Check: Is64BitInstallMode
+Name: "native";    Description: "Native OpenSSL Runtime (64-bit on x64/ARM64, 32-bit on x86)"; Types: standard full custom; Flags: fixed
+Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime (installs to %ProgramFiles(x86)%)"; Types: full custom; Check: Is64BitInstallMode
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
