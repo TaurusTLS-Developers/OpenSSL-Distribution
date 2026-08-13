@@ -20,28 +20,6 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 
-; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
-[Setup]
-AppId={{APP_ID}}
-AppName=OpenSSL {{VERSION}}
-AppVersion={{VERSION}}
-AppVerName=OpenSSL {{VERSION}}
-AppPublisher={{APP_PUBLISHER}}
-AppPublisherURL={{APP_PUBLISHER_URL}}
-VersionInfoVersion={{VERSION}}
-DefaultDirName={autopf}\{{PUBLISHER_DISPLAY_NAME}}\OpenSSL-{{VERSION}}
-DefaultGroupName=OpenSSL {{VERSION}}
-AllowNoIcons=yes
-OutputDir={{OUTPUT_DIR}}
-OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
-Compression=lzma2/ultra64
-SolidCompression=yes
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=commandline dialog
-DisableProgramGroupPage=yes
-WizardStyle=modern
-ArchitecturesInstallIn64BitMode=x64compatible arm64
-
 [Types]
 Name: "standard"; Description: "Standard Installation (Native Architecture Only)"
 Name: "full";     Description: "Full Installation (Native + 32-bit x86 Compatibility)"
