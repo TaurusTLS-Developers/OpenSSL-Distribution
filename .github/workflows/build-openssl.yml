@@ -616,24 +616,192 @@ jobs:
           retention-days: 1
           
   # =========================================================================
-  # 3. BUILD WINDOWS INSTALLERS (MSIX + InnoSetup) — Release Builds Only
+  # 3a. BUILD WINDOWS MULTI-ARCH INSTALLER — Release Builds Only
   # =========================================================================
-  build-windows-installers:
-    name: Windows Installer (${{ matrix.arch }})
+  InnoSetup-windows-installer:
+    name: Windows Multi-Arch Installer
     needs: [validate-version, build-common-assets, compile-binaries]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x64,     msix_arch: x64,  inno_app_id: B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5, inno_arch_allowed: x64compatible, inno_arch_64bit: x64compatible }
-          - { arch: x86,     msix_arch: x86,  inno_app_id: C4F9A3B2-D5E8-4F0A-C7B3-A8FAE5D8C1B6, inno_arch_allowed: '',            inno_arch_64bit: '' }
-          - { arch: arm64ec, msix_arch: arm64, inno_app_id: D5A0B4C3-E6F9-4A1B-D8C4-B9ABF6E9D2C7, inno_arch_allowed: arm64,         inno_arch_64bit: arm64 }
     runs-on: windows-latest
     permissions:
       id-token: write
       contents: read
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Download x64 Shared Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-x64-shared-${{ github.run_id }}
+          path: raw-shared-x64
+
+      - name: Download x86 Shared Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-x86-shared-${{ github.run_id }}
+          path: raw-shared-x86
+
+      - name: Download ARM64EC Shared Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
+          path: raw-shared-arm64ec
+
+      - name: Download Common Assets
+        uses: actions/download-artifact@v7
+        with:
+          name: openssl-common-assets-${{ github.run_id }}
+          path: common-assets
+
+      - name: Stage Multi-Arch Redistributables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $redist = "$env:GITHUB_WORKSPACE\redist"
+
+          foreach ($arch in @('x64', 'x86', 'arm64ec')) {
+            $archDir = "$redist\$arch"
+            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
+            $src = "$env:GITHUB_WORKSPACE\raw-shared-$arch"
+
+            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
+            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
+            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
+
+            if (Test-Path "$src\providers") {
+              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
+            }
+            if (Test-Path "$src\engines") {
+              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
+            }
+          }
+
+          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
+
+          Write-Host "=== Multi-Arch Redistributables Staged ==="
+          Get-ChildItem $redist -Recurse | Select-Object -ExpandProperty FullName
+
+      - name: Install InnoSetup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to install InnoSetup'; exit 1 }
+
+      - name: Generate and Compile Multi-Arch Installer
+        shell: pwsh
+        env:
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
+          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version   = '${{ needs.validate-version.outputs.version }}'
+          $appId     = 'B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5'
+          $wsDir     = $env:GITHUB_WORKSPACE
+          $redistDir = "$wsDir\redist"
+          $pubName   = $env:APP_PUBLISHER
+          $pubUrl    = $env:APP_PUBLISHER_URL
+
+          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
+
+          # Substitute template parameters
+          $templatePath = "$wsDir\config\openssl-installer.iss.template"
+          $outFilename  = "openssl-$version-Windows-installer"
+          $iss = (Get-Content $templatePath -Raw) `
+            .Replace('{{APP_ID}}', "{$appId}") `
+            .Replace('{{VERSION}}', $version) `
+            .Replace('{{APP_PUBLISHER}}', $pubName) `
+            .Replace('{{APP_PUBLISHER_URL}}', $pubUrl) `
+            .Replace('{{OUTPUT_DIR}}', "$wsDir\installers") `
+            .Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename) `
+            .Replace('{{REDIST_DIR}}', $redistDir)
+
+          $issPath = "$wsDir\openssl-installer.iss"
+          [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
+
+          Write-Host "=== Generated Multi-Arch .iss ==="
+          Get-Content $issPath
+
+          $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*' -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName -First 1
+          if (-not $iscc) {
+            $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($isccCmd) { $iscc = $isccCmd.Source }
+          }
+          if (-not $iscc) { Write-Error 'ISCC.exe not found'; exit 1 }
+
+          Write-Host "ISCC: $iscc"
+          & $iscc $issPath
+          if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
+          Write-Host "✅ Multi-Arch InnoSetup installer compiled."
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign Installer (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\installers
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Installer
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.exe
+          if ($files.Count -eq 0) { Write-Error 'No installer file found to verify.'; exit 1 }
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature: $($sig.Status)"; exit 1 }
+          }
+
+      - name: Upload Multi-Arch Installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-installer
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
+          archive: false
+          retention-days: 5
+
+  # =========================================================================
+  # 3b. BUILD WINDOWS MSIX BUNDLE INSTALLER — Release Builds Only
+  # =========================================================================
+  msixbundle-windows-installer:
+    name: Windows MSIX Bundle Installer
+    needs: [validate-version, build-common-assets, compile-binaries]
+    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
       - name: Validate Signing Secrets
         shell: pwsh
         run: |
@@ -650,345 +818,166 @@ jobs:
             exit 1
           }
 
-      - name: Download Signed Shared Artifact
+      - name: Download x64 Shared Artifact
         uses: actions/download-artifact@v7
         with:
-          name: raw-Windows-${{ matrix.arch }}-shared-${{ github.run_id }}
-          path: raw-shared
+          name: raw-Windows-x64-shared-${{ github.run_id }}
+          path: raw-shared-x64
 
-      - name: Download Common Assets (for LICENSE.txt)
+      - name: Download x86 Shared Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-x86-shared-${{ github.run_id }}
+          path: raw-shared-x86
+
+      - name: Download ARM64EC Shared Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
+          path: raw-shared-arm64ec
+
+      - name: Download Common Assets
         uses: actions/download-artifact@v7
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
-      - name: Collect Redistributable Files
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $redist = "$env:GITHUB_WORKSPACE\redist"
-          New-Item -ItemType Directory -Force -Path $redist, "$redist\providers", "$redist\engines" | Out-Null
-
-          # openssl.exe
-          Copy-Item "raw-shared\openssl.exe" $redist -ErrorAction SilentlyContinue
-
-          # Versioned DLLs only
-          Get-ChildItem "raw-shared" -Filter "libcrypto-*.dll" | Copy-Item -Destination $redist
-          Get-ChildItem "raw-shared" -Filter "libssl-*.dll"    | Copy-Item -Destination $redist
-
-          # Providers
-          if (Test-Path "raw-shared\providers") {
-            Get-ChildItem "raw-shared\providers" -Filter "*.dll" | Copy-Item -Destination "$redist\providers"
-          }
-
-          # Engines (3.x only — directory may be absent)
-          if (Test-Path "raw-shared\engines") {
-            Get-ChildItem "raw-shared\engines" -Filter "*.dll" | Copy-Item -Destination "$redist\engines"
-          }
-
-          # LICENSE
-          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
-
-          # Remove empty subdirectories
-          Get-ChildItem $redist -Recurse -Directory |
-            Where-Object { (Get-ChildItem $_.FullName).Count -eq 0 } |
-            Remove-Item -Force
-
-          Write-Host "=== Redistributable files staged ==="
-          Get-ChildItem $redist -Recurse | Select-Object -ExpandProperty FullName
-
-      - name: Build MSIX Package
+      - name: Build MSIX Packages and Bundle
         shell: powershell
         env:
           MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version   = '${{ needs.validate-version.outputs.version }}'
-          $arch      = '${{ matrix.arch }}'
-          $msixArch  = '${{ matrix.msix_arch }}'
           $publisher = $env:MSIX_PUBLISHER
+          $pubName   = $env:APP_PUBLISHER
           $parts     = $version -split '\.'
           $msixVer   = "$($parts[0]).$($parts[1]).$($parts[2]).0"
-          $staging   = "$env:GITHUB_WORKSPACE\msix-staging"
+          $wsDir     = $env:GITHUB_WORKSPACE
 
-          New-Item -ItemType Directory -Force -Path "$staging\Assets" | Out-Null
-          Copy-Item -Recurse -Force "$env:GITHUB_WORKSPACE\redist\*" $staging
-
-          # Generate logo PNGs (solid navy #1A3A5C) via Windows PowerShell 5.1 System.Drawing
-          Add-Type -AssemblyName System.Drawing
-          foreach ($spec in @(
-            [pscustomobject]@{ Name='StoreLogo.png';         W=50;  H=50  },
-            [pscustomobject]@{ Name='Square44x44Logo.png';   W=44;  H=44  },
-            [pscustomobject]@{ Name='Square150x150Logo.png'; W=150; H=150 }
-          )) {
-            $bmp = [System.Drawing.Bitmap]::new($spec.W, $spec.H, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-            $g   = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.Clear([System.Drawing.Color]::FromArgb(255, 26, 58, 92))
-            $g.Dispose()
-            $bmp.Save("$staging\Assets\$($spec.Name)", [System.Drawing.Imaging.ImageFormat]::Png)
-            $bmp.Dispose()
-          }
-
-          # Generate AppxManifest.xml with correct MaxVersionTested attribute
-          $nl  = [Environment]::NewLine
-          $xml  = "<?xml version=`"1.0`" encoding=`"utf-8`"?>$nl"
-          $xml += "<Package$nl"
-          $xml += "  xmlns=`"http://schemas.microsoft.com/appx/manifest/foundation/windows10`"$nl"
-          $xml += "  xmlns:uap=`"http://schemas.microsoft.com/appx/manifest/uap/windows10`"$nl"
-          $xml += "  xmlns:rescap=`"http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities`"$nl"
-          $xml += "  IgnorableNamespaces=`"uap rescap`">$nl"
-          $xml += "  <Identity$nl"
-          $xml += "    Name=`"TaurusTLS.OpenSSL`"$nl"
-          $xml += "    Publisher=`"$publisher`"$nl"
-          $xml += "    Version=`"$msixVer`"$nl"
-          $xml += "    ProcessorArchitecture=`"$msixArch`" />$nl"
-          $xml += "  <Properties>$nl"
-          $xml += "    <DisplayName>OpenSSL $version</DisplayName>$nl"
-          $xml += "    <PublisherDisplayName>TaurusTLS Developers</PublisherDisplayName>$nl"
-          $xml += "    <Description>OpenSSL $version redistributable for Windows $arch</Description>$nl"
-          $xml += "    <Logo>Assets\StoreLogo.png</Logo>$nl"
-          $xml += "  </Properties>$nl"
-          $xml += "  <Dependencies>$nl"
-          $xml += "    <TargetDeviceFamily Name=`"Windows.Desktop`" MinVersion=`"10.0.17763.0`" MaxVersionTested=`"10.0.22621.0`" />$nl"
-          $xml += "  </Dependencies>$nl"
-          $xml += "  <Resources>$nl"
-          $xml += "    <Resource Language=`"en-us`" />$nl"
-          $xml += "  </Resources>$nl"
-          $xml += "  <Applications>$nl"
-          $xml += "    <Application Id=`"OpenSSL`" Executable=`"openssl.exe`" EntryPoint=`"Windows.FullTrustApplication`">$nl"
-          $xml += "      <uap:VisualElements$nl"
-          $xml += "        DisplayName=`"OpenSSL $version`"$nl"
-          $xml += "        Description=`"OpenSSL cryptographic command-line tool`"$nl"
-          $xml += "        BackgroundColor=`"#1A3A5C`"$nl"
-          $xml += "        Square150x150Logo=`"Assets\Square150x150Logo.png`"$nl"
-          $xml += "        Square44x44Logo=`"Assets\Square44x44Logo.png`" />$nl"
-          $xml += "    </Application>$nl"
-          $xml += "  </Applications>$nl"
-          $xml += "  <Capabilities>$nl"
-          $xml += "    <rescap:Capability Name=`"runFullTrust`" />$nl"
-          $xml += "  </Capabilities>$nl"
-          $xml += "</Package>"
-          [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
-
-          # Locate MakeAppx.exe from the Windows SDK
+          # Locate MakeAppx.exe from Windows SDK
           $makeAppx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' `
             -Filter 'MakeAppx.exe' -Recurse -ErrorAction SilentlyContinue |
             Where-Object { $_.DirectoryName -match '\\x64$' } |
             Select-Object -ExpandProperty FullName -First 1
           if (-not $makeAppx) { Write-Error 'MakeAppx.exe not found in Windows SDK'; exit 1 }
-          Write-Host "MakeAppx: $makeAppx"
 
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\installers" | Out-Null
-          $msixOut = "$env:GITHUB_WORKSPACE\installers\openssl-$version-Windows-$arch.msix"
-          & $makeAppx pack /d $staging /p $msixOut /nv
-          if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx failed (exit $LASTEXITCODE)"; exit 1 }
-          Write-Host "✅ MSIX created: $msixOut"
+          New-Item -ItemType Directory -Force -Path "$wsDir\msix-packages" | Out-Null
+          $templatePath = "$wsDir\config\AppxManifest.xml.template"
 
-      - name: Generate and Compile InnoSetup Installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version     = '${{ needs.validate-version.outputs.version }}'
-          $arch        = '${{ matrix.arch }}'
-          $appId       = '${{ matrix.inno_app_id }}'
-          $archAllowed = '${{ matrix.inno_arch_allowed }}'
-          $arch64bit   = '${{ matrix.inno_arch_64bit }}'
-          $wsDir       = $env:GITHUB_WORKSPACE
-          $redistDir   = "$wsDir\redist"
+          # Define architectures (arm64ec maps to arm64 in MSIX manifests)
+          $archMap = @(
+            [pscustomobject]@{ PipelineArch='x64';     MsixArch='x64' },
+            [pscustomobject]@{ PipelineArch='x86';     MsixArch='x86' },
+            [pscustomobject]@{ PipelineArch='arm64ec'; MsixArch='arm64' }
+          )
 
+          foreach ($entry in $archMap) {
+            $pArch   = $entry.PipelineArch
+            $mArch   = $entry.MsixArch
+            $staging = "$wsDir\msix-staging-$pArch"
+            $src     = "$wsDir\raw-shared-$pArch"
+
+            New-Item -ItemType Directory -Force -Path "$staging\Assets" | Out-Null
+
+            # Copy redistributable binaries
+            Copy-Item "$src\openssl.exe" $staging -ErrorAction SilentlyContinue
+            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $staging
+            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $staging
+            if (Test-Path "$src\providers") {
+              New-Item -ItemType Directory -Force -Path "$staging\providers" | Out-Null
+              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$staging\providers"
+            }
+            if (Test-Path "$src\engines") {
+              New-Item -ItemType Directory -Force -Path "$staging\engines" | Out-Null
+              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$staging\engines"
+            }
+            Copy-Item "common-assets\LICENSE.txt" $staging -ErrorAction SilentlyContinue
+
+            # Graphics assets (copy from /assets or fallback to solid navy PNGs)
+            $logoSpecs = @(
+              [pscustomobject]@{ Name='openssl-50x50.png';   W=50;  H=50  },
+              [pscustomobject]@{ Name='openssl-44x44.png';   W=44;  H=44  },
+              [pscustomobject]@{ Name='openssl-150x150.png'; W=150; H=150 }
+            )
+            Add-Type -AssemblyName System.Drawing
+            foreach ($spec in $logoSpecs) {
+              $assetPath = "$wsDir\assets\$($spec.Name)"
+              if (Test-Path $assetPath) {
+                Copy-Item $assetPath "$staging\Assets\$($spec.Name)" -Force
+              } else {
+                $bmp = [System.Drawing.Bitmap]::new($spec.W, $spec.H, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+                $g   = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.Clear([System.Drawing.Color]::FromArgb(255, 26, 58, 92))
+                $g.Dispose()
+                $bmp.Save("$staging\Assets\$($spec.Name)", [System.Drawing.Imaging.ImageFormat]::Png)
+                $bmp.Dispose()
+              }
+            }
+
+            # Substitute AppxManifest template
+            $xml = (Get-Content $templatePath -Raw) `
+              .Replace('{{MSIX_PUBLISHER}}', $publisher) `
+              .Replace('{{MSIX_VERSION}}', $msixVer) `
+              .Replace('{{MSIX_ARCH}}', $mArch) `
+              .Replace('{{VERSION}}', $version) `
+              .Replace('{{ARCH}}', $pArch) `
+              .Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
+
+            [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
+
+            # Pack individual .msix
+            $msixOut = "$wsDir\msix-packages\openssl-$version-$pArch.msix"
+            & $makeAppx pack /d $staging /p $msixOut /nv
+            if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx pack failed for $pArch (exit $LASTEXITCODE)"; exit 1 }
+          }
+
+          # Bundle all individual .msix packages into single .msixbundle
           New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
-
-          # Build [Files] section dynamically from actual staged files
-          # (avoids InnoSetup errors when wildcard patterns match nothing)
-          $files = '[Files]'
-          if (Test-Path "$redistDir\openssl.exe") {
-            $files += "`r`nSource: `"$redistDir\openssl.exe`"; DestDir: `"{app}`"; Flags: ignoreversion"
-          }
-          Get-ChildItem $redistDir -Filter 'libcrypto-*.dll' -ErrorAction SilentlyContinue | ForEach-Object {
-            $files += "`r`nSource: `"$($_.FullName)`"; DestDir: `"{app}`"; Flags: ignoreversion"
-          }
-          Get-ChildItem $redistDir -Filter 'libssl-*.dll' -ErrorAction SilentlyContinue | ForEach-Object {
-            $files += "`r`nSource: `"$($_.FullName)`"; DestDir: `"{app}`"; Flags: ignoreversion"
-          }
-          Get-ChildItem "$redistDir\providers" -Filter '*.dll' -ErrorAction SilentlyContinue | ForEach-Object {
-            $files += "`r`nSource: `"$($_.FullName)`"; DestDir: `"{app}\providers`"; Flags: ignoreversion"
-          }
-          Get-ChildItem "$redistDir\engines" -Filter '*.dll' -ErrorAction SilentlyContinue | ForEach-Object {
-            $files += "`r`nSource: `"$($_.FullName)`"; DestDir: `"{app}\engines`"; Flags: ignoreversion"
-          }
-          if (Test-Path "$redistDir\LICENSE.txt") {
-            $files += "`r`nSource: `"$redistDir\LICENSE.txt`"; DestDir: `"{app}`"; Flags: ignoreversion"
-          }
-
-          # Architecture-specific directives (absent for x86 — runs on all archs)
-          $archLines = ''
-          if ($archAllowed) { $archLines += "`r`nArchitecturesAllowed=$archAllowed" }
-          if ($arch64bit)   { $archLines += "`r`nArchitecturesInstallIn64BitMode=$arch64bit" }
-
-          # Build full .iss content
-          $iss  = "; OpenSSL $version Windows $arch Installer - Generated by GitHub Actions`r`n"
-          $iss += "[Setup]`r`n"
-          $iss += "AppId={{$appId}`r`n"
-          $iss += "AppName=OpenSSL $version ($arch)`r`n"
-          $iss += "AppVersion=$version`r`n"
-          $iss += "AppVerName=OpenSSL $version ($arch)`r`n"
-          $iss += "AppPublisher=TaurusTLS Developers`r`n"
-          $iss += "AppPublisherURL=https://github.com/TaurusTLS-Developers/OpenSSL-Distribution`r`n"
-          $iss += "VersionInfoVersion=$version`r`n"
-          $iss += "DefaultDirName={autopf}\OpenSSL-$version`r`n"
-          $iss += "DefaultGroupName=OpenSSL $version`r`n"
-          $iss += "AllowNoIcons=yes`r`n"
-          $iss += "OutputDir=$wsDir\installers`r`n"
-          $iss += "OutputBaseFilename=openssl-$version-Windows-$arch-installer`r`n"
-          $iss += "Compression=lzma2/ultra64`r`n"
-          $iss += "SolidCompression=yes`r`n"
-          $iss += "PrivilegesRequired=lowest`r`n"
-          $iss += "PrivilegesRequiredOverridesAllowed=commandline dialog`r`n"
-          $iss += "DisableProgramGroupPage=yes`r`n"
-          $iss += "WizardStyle=modern$archLines`r`n"
-          $iss += "`r`n"
-          $iss += "[Languages]`r`n"
-          $iss += "Name: `"english`"; MessagesFile: `"compiler:Default.isl`"`r`n"
-          $iss += "`r`n"
-          $iss += "[Tasks]`r`n"
-          $iss += "Name: addtopath; Description: `"Add OpenSSL directory to &PATH`"; GroupDescription: `"Additional tasks:`"; Flags: unchecked`r`n"
-          $iss += "`r`n"
-          $iss += $files + "`r`n"
-          $iss += "`r`n"
-          $iss += "[Icons]`r`n"
-          $iss += "Name: `"{group}\OpenSSL $version`"; Filename: `"{app}\openssl.exe`"`r`n"
-          $iss += "Name: `"{group}\Uninstall OpenSSL $version`"; Filename: `"{uninstallexe}`"`r`n"
-          $iss += "`r`n"
-          $iss += "[Code]`r`n"
-          $iss += "procedure AddToPath(Dir: string; Machine: Boolean);`r`n"
-          $iss += "var RegPath, Path: string; RootKey: Integer;`r`n"
-          $iss += "begin`r`n"
-          $iss += "  if Machine then begin`r`n"
-          $iss += "    RootKey := HKEY_LOCAL_MACHINE;`r`n"
-          $iss += "    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';`r`n"
-          $iss += "  end else begin`r`n"
-          $iss += "    RootKey := HKEY_CURRENT_USER;`r`n"
-          $iss += "    RegPath := 'Environment';`r`n"
-          $iss += "  end;`r`n"
-          $iss += "  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Path := '';`r`n"
-          $iss += "  if Pos(LowerCase(Dir), LowerCase(Path)) = 0 then begin`r`n"
-          $iss += "    if (Length(Path) > 0) and (Path[Length(Path)] <> ';') then`r`n"
-          $iss += "      Path := Path + ';';`r`n"
-          $iss += "    RegWriteStringValue(RootKey, RegPath, 'Path', Path + Dir);`r`n"
-          $iss += "  end;`r`n"
-          $iss += "end;`r`n"
-          $iss += "`r`n"
-          $iss += "procedure RemoveFromPath(Dir: string; Machine: Boolean);`r`n"
-          $iss += "var RegPath, Path: string; RootKey, P: Integer;`r`n"
-          $iss += "begin`r`n"
-          $iss += "  if Machine then begin`r`n"
-          $iss += "    RootKey := HKEY_LOCAL_MACHINE;`r`n"
-          $iss += "    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';`r`n"
-          $iss += "  end else begin`r`n"
-          $iss += "    RootKey := HKEY_CURRENT_USER;`r`n"
-          $iss += "    RegPath := 'Environment';`r`n"
-          $iss += "  end;`r`n"
-          $iss += "  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Exit;`r`n"
-          $iss += "  P := Pos(';' + Dir, Path);`r`n"
-          $iss += "  if P > 0 then begin`r`n"
-          $iss += "    Delete(Path, P, 1 + Length(Dir));`r`n"
-          $iss += "    RegWriteStringValue(RootKey, RegPath, 'Path', Path); Exit;`r`n"
-          $iss += "  end;`r`n"
-          $iss += "  P := Pos(Dir + ';', Path);`r`n"
-          $iss += "  if P > 0 then begin`r`n"
-          $iss += "    Delete(Path, P, Length(Dir) + 1);`r`n"
-          $iss += "    RegWriteStringValue(RootKey, RegPath, 'Path', Path);`r`n"
-          $iss += "  end;`r`n"
-          $iss += "end;`r`n"
-          $iss += "`r`n"
-          $iss += "procedure CurStepChanged(CurStep: TSetupStep);`r`n"
-          $iss += "begin`r`n"
-          $iss += "  if (CurStep = ssPostInstall) and IsTaskSelected('addtopath') then`r`n"
-          $iss += "    AddToPath(ExpandConstant('{app}'), IsAdminInstallMode);`r`n"
-          $iss += "end;`r`n"
-          $iss += "`r`n"
-          $iss += "procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);`r`n"
-          $iss += "begin`r`n"
-          $iss += "  if CurUninstallStep = usPostUninstall then begin`r`n"
-          $iss += "    RemoveFromPath(ExpandConstant('{app}'), True);`r`n"
-          $iss += "    RemoveFromPath(ExpandConstant('{app}'), False);`r`n"
-          $iss += "  end;`r`n"
-          $iss += "end;`r`n"
-
-          $issPath = "$wsDir\openssl-installer.iss"
-          [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
-
-          Write-Host "=== Generated .iss ==="
-          Get-Content $issPath
-
-          # Locate ISCC.exe (installed by choco in previous step)
-          $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*' -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty FullName -First 1
-          if (-not $iscc) {
-            $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
-            if ($isccCmd) { $iscc = $isccCmd.Source }
-          }
-          if (-not $iscc) { Write-Error 'ISCC.exe not found'; exit 1 }
-
-          Write-Host "ISCC: $iscc"
-          & $iscc $issPath
-          if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
-          Write-Host "✅ InnoSetup installer compiled."
+          $bundleOut = "$wsDir\installers\openssl-$version-Windows.msixbundle"
+          & $makeAppx bundle /d "$wsDir\msix-packages" /p $bundleOut /nv
+          if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx bundle failed (exit $LASTEXITCODE)"; exit 1 }
+          Write-Host "✅ MSIX Bundle created: $bundleOut"
 
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Sign Installers (Azure Artifact Signing)
+      - name: Sign MSIX Bundle (Azure Artifact Signing)
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
           signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           files-folder: ${{ github.workspace }}\installers
-          files-folder-filter: exe,msix
+          files-folder-filter: msixbundle
           files-folder-recurse: false
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Verify Signed Installers
+      - name: Verify Signed MSIX Bundle
         shell: pwsh
         run: |
-          # Added \* to the path so PowerShell's -Include parameter works correctly
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.exe,*.msix
-          if ($files.Count -eq 0) { Write-Error 'No installer files found to verify.'; exit 1 }
-          $failed = $false
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msixbundle
+          if ($files.Count -eq 0) { Write-Error 'No .msixbundle file found to verify.'; exit 1 }
           foreach ($file in $files) {
             Write-Host "Verifying $($file.FullName)..."
             $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status:        $($sig.Status)"
-            Write-Host "  StatusMessage: $($sig.StatusMessage)"
-            if ($sig.SignerCertificate) {
-              Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-              Write-Host "  Issuer:  $($sig.SignerCertificate.Issuer)"
-            }
-            if ($sig.Status -ne 'Valid') {
-              Write-Error "Invalid signature for $($file.Name): $($sig.Status)"
-              $failed = $true
-            }
+            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature: $($sig.Status)"; exit 1 }
           }
-          if ($failed) { exit 1 }
 
-      - name: Upload Raw MSIX Artifact
+      - name: Upload MSIX Bundle Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: raw-installer-msix-${{ matrix.arch }}-${{ github.run_id }}
-          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
-          retention-days: 7
-
-      - name: Upload Raw InnoSetup Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: raw-installer-exe-${{ matrix.arch }}-${{ github.run_id }}
-          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}-installer.exe
-          retention-days: 7
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-msixbundle
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows.msixbundle
+          archive: false
+          retention-days: 5        
 
   # =========================================================================
   # 4. PACKAGE RELEASE (Fan-In Matrix)
@@ -996,7 +985,7 @@ jobs:
 
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
-    needs: [validate-version, build-common-assets, compile-binaries, build-windows-installers]
+    needs:  [validate-version, build-common-assets, compile-binaries]
     if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     strategy:
       fail-fast: false

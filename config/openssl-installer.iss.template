@@ -1,0 +1,112 @@
+; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
+[Setup]
+AppId={{APP_ID}}
+AppName=OpenSSL {{VERSION}}
+AppVersion={{VERSION}}
+AppVerName=OpenSSL {{VERSION}}
+AppPublisher={{APP_PUBLISHER}}
+AppPublisherURL={{APP_PUBLISHER_URL}}
+VersionInfoVersion={{VERSION}}
+DefaultDirName={autopf}\OpenSSL-{{VERSION}}
+DefaultGroupName=OpenSSL {{VERSION}}
+AllowNoIcons=yes
+OutputDir={{OUTPUT_DIR}}
+OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
+Compression=lzma2/ultra64
+SolidCompression=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline dialog
+DisableProgramGroupPage=yes
+WizardStyle=modern
+ArchitecturesInstallIn64BitMode=x64compatible arm64
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: addtopath; Description: "Add OpenSSL directory to &PATH"; GroupDescription: "Additional tasks:"; Flags: unchecked
+
+[Files]
+; License (Common)
+Source: "{{REDIST_DIR}}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+; --- x86 (32-bit) Files ---
+Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: not Is64BitInstallMode
+
+; --- x64 (64-bit) Files ---
+Source: "{{REDIST_DIR}}\x64\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsX64
+Source: "{{REDIST_DIR}}\x64\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsX64
+
+; --- ARM64EC (ARM64) Files ---
+Source: "{{REDIST_DIR}}\arm64ec\openssl.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\libcrypto-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\libssl-*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\providers\*.dll"; DestDir: "{app}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsARM64
+Source: "{{REDIST_DIR}}\arm64ec\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Check: IsARM64
+
+[Icons]
+Name: "{group}\OpenSSL {{VERSION}}"; Filename: "{app}\openssl.exe"
+Name: "{group}\Uninstall OpenSSL {{VERSION}}"; Filename: "{uninstallexe}"
+
+[Code]
+procedure AddToPath(Dir: string; Machine: Boolean);
+var RegPath, Path: string; RootKey: Integer;
+begin
+  if Machine then begin
+    RootKey := HKEY_LOCAL_MACHINE;
+    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  end else begin
+    RootKey := HKEY_CURRENT_USER;
+    RegPath := 'Environment';
+  end;
+  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Path := '';
+  if Pos(LowerCase(Dir), LowerCase(Path)) = 0 then begin
+    if (Length(Path) > 0) and (Path[Length(Path)] <> ';') then
+      Path := Path + ';';
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path + Dir);
+  end;
+end;
+
+procedure RemoveFromPath(Dir: string; Machine: Boolean);
+var RegPath, Path: string; RootKey, P: Integer;
+begin
+  if Machine then begin
+    RootKey := HKEY_LOCAL_MACHINE;
+    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  end else begin
+    RootKey := HKEY_CURRENT_USER;
+    RegPath := 'Environment';
+  end;
+  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Exit;
+  P := Pos(';' + Dir, Path);
+  if P > 0 then begin
+    Delete(Path, P, 1 + Length(Dir));
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path); Exit;
+  end;
+  P := Pos(Dir + ';', Path);
+  if P > 0 then begin
+    Delete(Path, P, Length(Dir) + 1);
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and IsTaskSelected('addtopath') then
+    AddToPath(ExpandConstant('{app}'), IsAdminInstallMode);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then begin
+    RemoveFromPath(ExpandConstant('{app}'), True);
+    RemoveFromPath(ExpandConstant('{app}'), False);
+  end;
+end;
