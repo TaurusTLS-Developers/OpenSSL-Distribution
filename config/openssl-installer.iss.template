@@ -1,4 +1,6 @@
 ; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
+#define MyAppName "OpenSSL"
+
 [Setup]
 AppId={{APP_ID}}
 AppName=OpenSSL {{VERSION}}
@@ -14,11 +16,19 @@ OutputDir={{OUTPUT_DIR}}
 OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
 Compression=lzma2/ultra64
 SolidCompression=yes
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline dialog
 DisableProgramGroupPage=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible arm64
+
+; --- Branding Directives (Optional: Ignored if files are absent) ---
+#ifexist "assets\app.ico"
+SetupIconFile=assets\app.ico
+#endif
+#ifexist "assets\WizardSmallImage.bmp"
+WizardSmallImageFile=assets\WizardSmallImage.bmp
+#endif
 
 [Types]
 Name: "standard"; Description: "Standard Installation (Native Architecture Only)"
@@ -36,15 +46,20 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: addtopath; Description: "Add native OpenSSL bin directory to system &PATH"; Components: native
 
 [Files]
-; License (Common)
+; License
 Source: "{{REDIST_DIR}}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+; Optional: Branding Icon for Start Menu shortcut
+#ifexist "assets\app.ico"
+Source: "assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 ; --- Native x86 Files (installed to {app}\bin32 on 32-bit Windows OS) ---
 Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{app}\bin32"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
 Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{app}\bin32"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
 Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{app}\bin32"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
 Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{app}\bin32\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
-Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\bin32\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
 
 ; --- Native x64 Files (installed to {app}\bin64 on 64-bit x64 Windows OS) ---
 Source: "{{REDIST_DIR}}\x64\openssl.exe"; DestDir: "{app}\bin64"; Flags: ignoreversion; Components: native; Check: IsX64
@@ -68,8 +83,15 @@ Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{app}\bin32\providers"; 
 Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{app}\bin32\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
 
 [Icons]
-Name: "{group}\OpenSSL {{VERSION}}"; Filename: "{app}\bin64\openssl.exe"; Check: Is64BitInstallMode
-Name: "{group}\OpenSSL {{VERSION}}"; Filename: "{app}\bin32\openssl.exe"; Check: not Is64BitInstallMode
+; Start Menu Command Prompt Shortcuts with local PATH pre-configured
+#ifexist "assets\app.ico"
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin64;%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Check: Is64BitInstallMode
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin32;%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Check: not Is64BitInstallMode
+#else
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin64;%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; Check: Is64BitInstallMode
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin32;%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; Check: not Is64BitInstallMode
+#endif
+
 Name: "{group}\Uninstall OpenSSL {{VERSION}}"; Filename: "{uninstallexe}"
 
 [Code]
