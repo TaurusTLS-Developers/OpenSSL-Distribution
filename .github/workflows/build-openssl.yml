@@ -879,7 +879,15 @@ jobs:
             $staging = "$wsDir\msix-staging-$pArch"
             $src     = "$wsDir\raw-shared-$pArch"
 
-            New-Item -ItemType Directory -Force -Path "$staging\Assets" | Out-Null
+            # Create clean staging directory
+            New-Item -ItemType Directory -Force -Path $staging | Out-Null
+
+            # Copy assets folder directly from repository (openssl-150x150.png, openssl-44x44.png, openssl-50x50.png)
+            if (Test-Path "$wsDir\assets") {
+              Copy-Item -Recurse -Force "$wsDir\assets" "$staging\"
+            } else {
+              Write-Error "Assets folder not found at $wsDir\assets"; exit 1
+            }
 
             # Copy redistributable binaries & license
             Copy-Item "$src\openssl.exe" $staging -ErrorAction SilentlyContinue
@@ -894,27 +902,6 @@ jobs:
               Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$staging\engines"
             }
             Copy-Item "common-assets\LICENSE.txt" $staging -ErrorAction SilentlyContinue
-
-            # Graphics assets (copy from /assets or fallback to solid navy PNGs)
-            $logoSpecs = @(
-              [pscustomobject]@{ Name='StoreLogo.png';         W=50;  H=50  },
-              [pscustomobject]@{ Name='Square44x44Logo.png';   W=44;  H=44  },
-              [pscustomobject]@{ Name='Square150x150Logo.png'; W=150; H=150 }
-            )
-            Add-Type -AssemblyName System.Drawing
-            foreach ($spec in $logoSpecs) {
-              $assetPath = "$wsDir\assets\$($spec.Name)"
-              if (Test-Path $assetPath) {
-                Copy-Item $assetPath "$staging\Assets\$($spec.Name)" -Force
-              } else {
-                $bmp = [System.Drawing.Bitmap]::new($spec.W, $spec.H, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-                $g   = [System.Drawing.Graphics]::FromImage($bmp)
-                $g.Clear([System.Drawing.Color]::FromArgb(255, 26, 58, 92))
-                $g.Dispose()
-                $bmp.Save("$staging\Assets\$($spec.Name)", [System.Drawing.Imaging.ImageFormat]::Png)
-                $bmp.Dispose()
-              }
-            }
 
             # Substitute AppxManifest template tokens
             $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
