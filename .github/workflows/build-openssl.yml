@@ -963,13 +963,13 @@ jobs:
       - name: Download InnoSetup Installer
         uses: actions/download-artifact@v7
         with:
-          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-installer
+          name: openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
           path: inno-installer
 
       - name: Download MSIX Packages
         uses: actions/download-artifact@v7
         with:
-          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-msix
+          name: openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
           path: msix-installers
 
       - name: Test InnoSetup Installation & Live TLS Loopback
@@ -1355,7 +1355,7 @@ jobs:
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
-    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers]
+    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers, verify-windows-installers]
     runs-on: ubuntu-latest
     if: |
       always() &&
