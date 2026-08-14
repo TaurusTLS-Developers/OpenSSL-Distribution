@@ -789,10 +789,10 @@ jobs:
           retention-days: 5
 
   # =========================================================================
-  # 3b. BUILD WINDOWS MSIX BUNDLE INSTALLER — Release Builds Only
+  # 3b. BUILD WINDOWS MSIX FRAMEWORK PACKAGES — Release Builds Only
   # =========================================================================
-  msixbundle-windows-installer:
-    name: Windows MSIX Bundle Installer
+  msix-windows-installers:
+    name: Windows MSIX Framework Packages
     needs: [validate-version, build-common-assets, compile-binaries]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     runs-on: windows-latest
@@ -842,7 +842,7 @@ jobs:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
-      - name: Build MSIX Packages and Bundle
+      - name: Build Framework MSIX Packages
         shell: powershell
         env:
           MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
@@ -863,10 +863,10 @@ jobs:
             Select-Object -ExpandProperty FullName -First 1
           if (-not $makeAppx) { Write-Error 'MakeAppx.exe not found in Windows SDK'; exit 1 }
 
-          New-Item -ItemType Directory -Force -Path "$wsDir\msix-packages" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
           $templatePath = "$wsDir\config\AppxManifest.xml.template"
 
-          # Define architectures (arm64ec maps to arm64 in MSIX manifests)
+          # Map pipeline architectures to MSIX arch tags
           $archMap = @(
             [pscustomobject]@{ PipelineArch='x64';     MsixArch='x64' },
             [pscustomobject]@{ PipelineArch='x86';     MsixArch='x86' },
@@ -881,7 +881,7 @@ jobs:
 
             New-Item -ItemType Directory -Force -Path "$staging\Assets" | Out-Null
 
-            # Copy redistributable binaries
+            # Copy redistributable binaries & license
             Copy-Item "$src\openssl.exe" $staging -ErrorAction SilentlyContinue
             Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $staging
             Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $staging
@@ -897,9 +897,9 @@ jobs:
 
             # Graphics assets (copy from /assets or fallback to solid navy PNGs)
             $logoSpecs = @(
-              [pscustomobject]@{ Name='openssl-50x50.png';   W=50;  H=50  },
-              [pscustomobject]@{ Name='openssl-44x44.png';   W=44;  H=44  },
-              [pscustomobject]@{ Name='openssl-150x150.png'; W=150; H=150 }
+              [pscustomobject]@{ Name='StoreLogo.png';         W=50;  H=50  },
+              [pscustomobject]@{ Name='Square44x44Logo.png';   W=44;  H=44  },
+              [pscustomobject]@{ Name='Square150x150Logo.png'; W=150; H=150 }
             )
             Add-Type -AssemblyName System.Drawing
             foreach ($spec in $logoSpecs) {
@@ -916,66 +916,63 @@ jobs:
               }
             }
 
-            # Substitute AppxManifest template
-            $xml = (Get-Content $templatePath -Raw)
-            $xml = $xml.Replace('{{MSIX_PUBLISHER}}', $publisher)
+            # Substitute AppxManifest template tokens
+            $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
+            $xmlPubName   = [System.Security.SecurityElement]::Escape($pubName)
+
+            $xml = Get-Content $templatePath -Raw
+            $xml = $xml.Replace('{{MSIX_PUBLISHER}}', $xmlPublisher)
             $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
             $xml = $xml.Replace('{{MSIX_ARCH}}', $mArch)
             $xml = $xml.Replace('{{VERSION}}', $version)
             $xml = $xml.Replace('{{ARCH}}', $pArch)
-            $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
+            $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $xmlPubName)
 
             [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
 
-            # Pack individual .msix
-            $msixOut = "$wsDir\msix-packages\openssl-$version-$pArch.msix"
-            & $makeAppx pack /d $staging /p $msixOut /nv
+            # Pack individual Framework .msix directly into installers output folder
+            $msixOut = "$wsDir\installers\openssl-$version-Windows-$pArch.msix"
+            & $makeAppx pack /d $staging /p $msixOut /o
             if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx pack failed for $pArch (exit $LASTEXITCODE)"; exit 1 }
+            Write-Host "✅ Framework MSIX created: $msixOut"
           }
-
-          # Bundle all individual .msix packages into single .msixbundle
-          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
-          $bundleOut = "$wsDir\installers\openssl-$version-Windows.msixbundle"
-          & $makeAppx bundle /d "$wsDir\msix-packages" /p $bundleOut /o
-          if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx bundle failed (exit $LASTEXITCODE)"; exit 1 }
-          Write-Host "✅ MSIX Bundle created: $bundleOut"
 
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Sign MSIX Bundle (Azure Artifact Signing)
+      - name: Sign MSIX Packages (Azure Artifact Signing)
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
           signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           files-folder: ${{ github.workspace }}\installers
-          files-folder-filter: msixbundle
+          files-folder-filter: msix
           files-folder-recurse: false
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Verify Signed MSIX Bundle
+      - name: Verify Signed MSIX Packages
         shell: pwsh
         run: |
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msixbundle
-          if ($files.Count -eq 0) { Write-Error 'No .msixbundle file found to verify.'; exit 1 }
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msix
+          if ($files.Count -eq 0) { Write-Error 'No .msix files found to verify.'; exit 1 }
           foreach ($file in $files) {
             Write-Host "Verifying $($file.FullName)..."
             $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  Status:  $($sig.Status)"
             Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature: $($sig.Status)"; exit 1 }
+            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature on $($file.Name): $($sig.Status)"; exit 1 }
           }
 
-      - name: Upload MSIX Bundle Artifact
+      - name: Upload MSIX Framework Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-msixbundle
-          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows.msixbundle
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-msix
+          path: ${{ github.workspace }}\installers\*.msix
           archive: false
           retention-days: 5        
 
