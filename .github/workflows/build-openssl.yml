@@ -1242,9 +1242,13 @@ jobs:
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
-    needs: package-release
+    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers]
     runs-on: ubuntu-latest
-    if: inputs.keep_raw_artifacts != true
+    if: |
+      always() &&
+      inputs.keep_raw_artifacts != true &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     permissions:
       actions: write
     steps:
