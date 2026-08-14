@@ -965,12 +965,14 @@ jobs:
         with:
           name: openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
           path: inno-installer
+          skip-decompress: true
 
       - name: Download MSIX Packages
         uses: actions/download-artifact@v7
         with:
           name: openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
           path: msix-installers
+          skip-decompress: true
 
       - name: Test InnoSetup Installation & Live TLS Loopback
         shell: pwsh
