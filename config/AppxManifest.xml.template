@@ -13,7 +13,7 @@
     <DisplayName>OpenSSL {{VERSION}}</DisplayName>
     <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
     <Description>OpenSSL {{VERSION}} redistributable for Windows {{ARCH}}</Description>
-    <Logo>Assets\StoreLogo.png</Logo>
+    <Logo>assets\openssl-150x150.png</Logo>
     <Framework>true</Framework>
   </Properties>
   <Dependencies>
@@ -27,9 +27,9 @@
       <uap:VisualElements
         DisplayName="OpenSSL {{VERSION}}"
         Description="OpenSSL cryptographic command-line tool"
-        BackgroundColor="#1A3A5C"
-        Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png" />
+        BackgroundColor="transparent"
+        Square150x150Logo="assets\openssl-150x150.png"
+        Square44x44Logo="assets\openssl-44x44.png" />
     </Application>
   </Applications>
   <Capabilities>
