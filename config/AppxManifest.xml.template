@@ -4,35 +4,26 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap rescap">
+  
   <Identity
     Name="TaurusTLS.OpenSSL"
     Publisher="{{MSIX_PUBLISHER}}"
     Version="{{MSIX_VERSION}}"
     ProcessorArchitecture="{{MSIX_ARCH}}" />
+    
   <Properties>
     <DisplayName>OpenSSL {{VERSION}}</DisplayName>
     <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
-    <Description>OpenSSL {{VERSION}} redistributable for Windows {{ARCH}}</Description>
+    <Description>OpenSSL {{VERSION}} redistributable framework for Windows {{ARCH}}</Description>
     <Logo>assets\openssl-150x150.png</Logo>
     <Framework>true</Framework>
   </Properties>
+  
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
   </Dependencies>
+  
   <Resources>
     <Resource Language="en-us" />
   </Resources>
-  <Applications>
-    <Application Id="OpenSSL" Executable="openssl.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements
-        DisplayName="OpenSSL {{VERSION}}"
-        Description="OpenSSL cryptographic command-line tool"
-        BackgroundColor="transparent"
-        Square150x150Logo="assets\openssl-150x150.png"
-        Square44x44Logo="assets\openssl-44x44.png" />
-    </Application>
-  </Applications>
-  <Capabilities>
-    <rescap:Capability Name="runFullTrust" />
-  </Capabilities>
 </Package>
