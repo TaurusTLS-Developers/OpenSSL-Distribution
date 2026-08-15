@@ -960,21 +960,19 @@ jobs:
           - { arch: arm64ec, runner: windows-11-arm, is_arm64: true  }
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Download InnoSetup Installer (via GitHub CLI)
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          New-Item -ItemType Directory -Force -Path inno-installer | Out-Null
-          gh run download ${{ github.run_id }} --name "openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe" --dir inno-installer
+      - name: Download InnoSetup Installer
+        uses: actions/download-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
+          path: inno-installer
+          skip-decompress: true
 
-      - name: Download MSIX Packages (via GitHub CLI)
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          New-Item -ItemType Directory -Force -Path msix-installers | Out-Null
-          gh run download ${{ github.run_id }} --name "openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix" --dir msix-installers
+      - name: Download MSIX Packages
+        uses: actions/download-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
+          path: msix-installers
+          skip-decompress: true
 
       - name: Test InnoSetup Installation & Live TLS Loopback
         shell: pwsh
