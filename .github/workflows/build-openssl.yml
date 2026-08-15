@@ -645,25 +645,25 @@ jobs:
           }
 
       - name: Download x64 Shared Artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x64-shared-${{ github.run_id }}
           path: raw-shared-x64
 
       - name: Download x86 Shared Artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x86-shared-${{ github.run_id }}
           path: raw-shared-x86
 
       - name: Download ARM64EC Shared Artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: raw-Windows-arm64ec-shared-${{ github.run_id }}
           path: raw-shared-arm64ec
 
       - name: Download Common Assets
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
@@ -826,13 +826,13 @@ jobs:
           }
 
       - name: Download Shared Artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: raw-Windows-${{ matrix.arch }}-shared-${{ github.run_id }}
           path: raw-shared
 
       - name: Download Common Assets
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
@@ -961,18 +961,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Download InnoSetup Installer
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
           path: inno-installer
-          skip-decompress: true
 
       - name: Download MSIX Packages
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
           path: msix-installers
-          skip-decompress: true
 
       - name: Test InnoSetup Installation & Live TLS Loopback
         shell: pwsh
@@ -1124,14 +1122,14 @@ jobs:
       - uses: actions/checkout@v6
       
       - name: Download Common Assets
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
           
       - name: Download Raw Binaries (Standard)
         if: matrix.label != 'macOS'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: raw-${{ matrix.label }}-${{ matrix.arch }}-*-${{ github.run_id }}
           path: raw-binaries
@@ -1139,7 +1137,7 @@ jobs:
           
       - name: Download Raw Binaries (macOS Universal)
         if: matrix.label == 'macOS'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: raw-macOS-*-${{ github.run_id }}
           path: raw-binaries
@@ -1328,7 +1326,7 @@ jobs:
           retention-days: 5
       - name: Download Windows Installers
         if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: raw-installer-*-${{ matrix.arch }}-${{ github.run_id }}
           path: installers
