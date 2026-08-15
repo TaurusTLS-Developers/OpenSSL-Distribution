@@ -616,11 +616,347 @@ jobs:
           retention-days: 1
           
   # =========================================================================
-  # 3. PACKAGE RELEASE (Fan-In Matrix)
+  # 3a. BUILD WINDOWS MULTI-ARCH INSTALLER — Release Builds Only
   # =========================================================================
+  InnoSetup-windows-installer:
+    name: Inno Setup Windows Multi-Arch Installer
+    needs: [validate-version, build-common-assets, compile-binaries]
+    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Download x64 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x64-shared-${{ github.run_id }}
+          path: raw-shared-x64
+
+      - name: Download x86 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x86-shared-${{ github.run_id }}
+          path: raw-shared-x86
+
+      - name: Download ARM64EC Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
+          path: raw-shared-arm64ec
+
+      - name: Download Common Assets
+        uses: actions/download-artifact@v8
+        with:
+          name: openssl-common-assets-${{ github.run_id }}
+          path: common-assets
+
+      - name: Stage Multi-Arch Redistributables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $redist = "$env:GITHUB_WORKSPACE\redist"
+
+          foreach ($arch in @('x64', 'x86', 'arm64ec')) {
+            $archDir = "$redist\$arch"
+            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
+            $src = "$env:GITHUB_WORKSPACE\raw-shared-$arch"
+
+            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
+            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
+            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
+
+            if (Test-Path "$src\providers") {
+              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
+            }
+            if (Test-Path "$src\engines") {
+              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
+            }
+          }
+
+          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
+
+          Write-Host "=== Multi-Arch Redistributables Staged ==="
+          Get-ChildItem $redist -Recurse | Select-Object -ExpandProperty FullName
+
+      - name: Install InnoSetup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to install InnoSetup'; exit 1 }
+
+      - name: Generate and Compile Multi-Arch Installer
+        shell: pwsh
+        env:
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
+          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version   = '${{ needs.validate-version.outputs.version }}'
+          $appId     = 'B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5'
+          $wsDir     = $env:GITHUB_WORKSPACE
+          $redistDir = "$wsDir\redist"
+          $assetsDir = "$wsDir\assets"
+          $pubName   = $env:APP_PUBLISHER
+          $pubUrl    = $env:APP_PUBLISHER_URL
+
+          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
+
+          # Substitute template parameters
+          $templatePath = "$wsDir\config\openssl-installer.iss.template"
+          $outFilename  = "openssl-$version-Windows-installer"
+          
+          $iss = Get-Content $templatePath -Raw
+          $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
+          $iss = $iss.Replace('{{VERSION}}', $version)
+          $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
+          $iss = $iss.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
+          $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
+          $iss = $iss.Replace('{{OUTPUT_DIR}}', "$wsDir\installers")
+          $iss = $iss.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename)
+          $iss = $iss.Replace('{{REDIST_DIR}}', $redistDir)
+          $iss = $iss.Replace('{{ASSETS_DIR}}', $assetsDir)
+
+          $issPath = "$wsDir\openssl-installer.iss"
+          [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
+
+          Write-Host "=== Generated Multi-Arch .iss ==="
+          Get-Content $issPath
+
+          $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*' -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName -First 1
+          if (-not $iscc) {
+            $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($isccCmd) { $iscc = $isccCmd.Source }
+          }
+          if (-not $iscc) { Write-Error 'ISCC.exe not found'; exit 1 }
+
+          Write-Host "ISCC: $iscc"
+          & $iscc $issPath
+          if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
+          Write-Host "✅ Multi-Arch InnoSetup installer compiled."
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign Installer (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\installers
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Installer
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.exe
+          if ($files.Count -eq 0) { Write-Error 'No installer file found to verify.'; exit 1 }
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature: $($sig.Status)"; exit 1 }
+          }
+
+      - name: Upload Multi-Arch Installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-installer
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-installer.exe
+          archive: false
+          retention-days: 5
+
+  # =========================================================================
+  # 3b. BUILD WINDOWS MSIX FRAMEWORK PACKAGES (Matrix) — Release Builds Only
+  # =========================================================================
+  msix-windows-installers:
+    name: Windows MSIX Framework (${{ matrix.arch }})
+    needs: [validate-version, build-common-assets, compile-binaries]
+    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,     msix_arch: x64 }
+          - { arch: x86,     msix_arch: x86 }
+          - { arch: arm64ec, msix_arch: arm64 }
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_MSIX_PUBLISHER }}'))           { $missing += 'AZURE_MSIX_PUBLISHER' }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Download Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-${{ matrix.arch }}-shared-${{ github.run_id }}
+          path: raw-shared
+
+      - name: Download Common Assets
+        uses: actions/download-artifact@v8
+        with:
+          name: openssl-common-assets-${{ github.run_id }}
+          path: common-assets
+
+      - name: Build Framework MSIX Package
+        shell: powershell
+        env:
+          MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version   = '${{ needs.validate-version.outputs.version }}'
+          $arch      = '${{ matrix.arch }}'
+          $msixArch  = '${{ matrix.msix_arch }}'
+          $publisher = $env:MSIX_PUBLISHER
+          $pubName   = $env:APP_PUBLISHER
+          $parts     = $version -split '\.'
+          $msixVer   = "$($parts[0]).$($parts[1]).$($parts[2]).0"
+          $wsDir     = $env:GITHUB_WORKSPACE
+          $staging   = "$wsDir\msix-staging"
+          $src       = "$wsDir\raw-shared"
+
+          # Locate MakeAppx.exe from Windows SDK
+          $makeAppx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' `
+            -Filter 'MakeAppx.exe' -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.DirectoryName -match '\\x64$' } |
+            Select-Object -ExpandProperty FullName -First 1
+          if (-not $makeAppx) { Write-Error 'MakeAppx.exe not found in Windows SDK'; exit 1 }
+
+          New-Item -ItemType Directory -Force -Path "$staging\Assets", "$wsDir\installers" | Out-Null
+
+          # Copy assets folder directly from repository (openssl-150x150.png, openssl-44x44.png, openssl-50x50.png)
+          if (Test-Path "$wsDir\assets") {
+            Copy-Item -Recurse -Force "$wsDir\assets" "$staging\"
+          } else {
+            Write-Error "Assets folder not found at $wsDir\assets"; exit 1
+          }
+
+          # Copy redistributable binaries & license
+          Copy-Item "$src\openssl.exe" $staging -ErrorAction SilentlyContinue
+          Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $staging
+          Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $staging
+          if (Test-Path "$src\providers") {
+            New-Item -ItemType Directory -Force -Path "$staging\providers" | Out-Null
+            Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$staging\providers"
+          }
+          if (Test-Path "$src\engines") {
+            New-Item -ItemType Directory -Force -Path "$staging\engines" | Out-Null
+            Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$staging\engines"
+          }
+          Copy-Item "common-assets\LICENSE.txt" $staging -ErrorAction SilentlyContinue
+
+          # Substitute AppxManifest template tokens
+          $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
+          $xmlPubName   = [System.Security.SecurityElement]::Escape($pubName)
+
+          $templatePath = "$wsDir\config\AppxManifest.xml.template"
+          $xml = Get-Content $templatePath -Raw
+          $xml = $xml.Replace('{{MSIX_PUBLISHER}}', $xmlPublisher)
+          $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
+          $xml = $xml.Replace('{{MSIX_ARCH}}', $msixArch)
+          $xml = $xml.Replace('{{VERSION}}', $version)
+          $xml = $xml.Replace('{{ARCH}}', $arch)
+          $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $xmlPubName)
+
+          [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
+
+          # Pack individual Framework .msix
+          $msixOut = "$wsDir\installers\openssl-$version-Windows-$arch.msix"
+          & $makeAppx pack /d $staging /p $msixOut /o
+          if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx pack failed for $arch"; exit 1 }
+          Write-Host "✅ Framework MSIX created: $msixOut"
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign MSIX Package (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\installers
+          files-folder-filter: msix
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed MSIX Package
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msix
+          if ($files.Count -eq 0) { Write-Error 'No .msix file found to verify.'; exit 1 }
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status:  $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature on $($file.Name): $($sig.Status)"; exit 1 }
+          }
+
+      - name: Upload MSIX Framework Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msix
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
+          archive: false
+          retention-days: 5
+  
+  # =========================================================================
+  # 4. PACKAGE RELEASE (Fan-In Matrix)
+  # =========================================================================
+
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs:  [validate-version, build-common-assets, compile-binaries]
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     strategy:
       fail-fast: false
       matrix:
@@ -646,14 +982,14 @@ jobs:
       - uses: actions/checkout@v6
       
       - name: Download Common Assets
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
           
       - name: Download Raw Binaries (Standard)
         if: matrix.label != 'macOS'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: raw-${{ matrix.label }}-${{ matrix.arch }}-*-${{ github.run_id }}
           path: raw-binaries
@@ -661,7 +997,7 @@ jobs:
           
       - name: Download Raw Binaries (macOS Universal)
         if: matrix.label == 'macOS'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: raw-macOS-*-${{ github.run_id }}
           path: raw-binaries
@@ -848,15 +1184,44 @@ jobs:
           name: build-metadata
           path: dist/version.txt
           retention-days: 5
+      - name: Download Windows Installers
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: raw-installer-*-${{ matrix.arch }}-${{ github.run_id }}
+          path: installers
+          merge-multiple: true
+
+      - name: Upload Final MSIX Installer
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msix
+          path: installers/openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msix
+          archive: false
+          retention-days: 5
+
+      - name: Upload Final InnoSetup Installer
+        if: matrix.label == 'Windows' && needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-installer
+          path: installers/openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}-installer.exe
+          archive: false
+          retention-days: 5
 
   # =========================================================================
-  # 4. CLEANUP RAW ARTIFACTS
+  # 5. CLEANUP RAW ARTIFACTS
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
-    needs: package-release
+    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers]
     runs-on: ubuntu-latest
-    if: inputs.keep_raw_artifacts != true
+    if: |
+      always() &&
+      inputs.keep_raw_artifacts != true &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     permissions:
       actions: write
     steps:

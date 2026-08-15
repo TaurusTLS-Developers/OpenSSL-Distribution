@@ -127,10 +127,13 @@ jobs:
               $DRAFT_FLAG
           fi
           
-          # 2. Upload artifacts
+          # 2. Upload artifacts (ZIP, EXE, MSIX)
           # The --clobber flag overwrites existing files with the same name safely
           echo "Uploading artifacts to $TAG_NAME..."
-          gh release upload "$TAG_NAME" artifacts/openssl-*.zip --clobber
+          find artifacts -type f \( -name "*.zip" -o -name "*.exe" -o -name "*.msix" \) | while read -r asset; do
+            echo "Uploading: $asset"
+            gh release upload "$TAG_NAME" "$asset" --clobber
+          done
 
       - name: Notify Maintainers (Create Issue)
         if: env.IS_DRAFT == 'true'

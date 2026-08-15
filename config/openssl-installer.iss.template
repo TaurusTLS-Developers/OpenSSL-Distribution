@@ -1,0 +1,195 @@
+; OpenSSL {{VERSION}} Multi-Architecture Windows Installer
+#define MyAppName "OpenSSL"
+
+[Setup]
+AppId={{APP_ID}}
+AppName=OpenSSL {{VERSION}}
+AppVersion={{VERSION}}
+AppVerName=OpenSSL {{VERSION}}
+AppPublisher={{APP_PUBLISHER}}
+AppPublisherURL={{APP_PUBLISHER_URL}}
+VersionInfoVersion={{VERSION}}
+DefaultDirName={autopf}\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}
+DefaultGroupName=OpenSSL {{VERSION}}
+AllowNoIcons=yes
+OutputDir={{OUTPUT_DIR}}
+OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
+Compression=lzma2/ultra64
+SolidCompression=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog commandline
+DisableProgramGroupPage=yes
+WizardStyle=modern
+ArchitecturesInstallIn64BitMode=x64compatible arm64
+
+; --- Branding Directives (Resolved via {{ASSETS_DIR}}) ---
+#ifexist "{{ASSETS_DIR}}\app.ico"
+SetupIconFile={{ASSETS_DIR}}\app.ico
+UninstallDisplayIcon={app}\app.ico
+#endif
+#ifexist "{{ASSETS_DIR}}\WizardSmallImage.bmp"
+WizardSmallImageFile={{ASSETS_DIR}}\WizardSmallImage.bmp
+#endif
+
+[Types]
+Name: "standard"; Description: "Standard Installation (Native Architecture Only)"
+Name: "full";     Description: "Full Installation (Native + 32-bit x86 Compatibility)"
+Name: "custom";   Description: "Custom Installation"; Flags: iscustom
+
+[Components]
+Name: "native";    Description: "Native OpenSSL Runtime"; Types: standard full custom; Flags: fixed
+Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime"; Types: full; Flags: dontinheritcheck; Check: Is64BitInstallMode
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: addtopath; Description: "Add OpenSSL directory to system &PATH"; Components: native
+
+[Files]
+; License
+Source: "{{REDIST_DIR}}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+; Optional: Branding Icon for Start Menu shortcut & Uninstaller DisplayIcon
+#ifexist "{{ASSETS_DIR}}\app.ico"
+Source: "{{ASSETS_DIR}}\app.ico"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+
+; --- Native x86 Files (installed on 32-bit Windows OS) ---
+Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{code:Get32BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{code:Get32BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: not Is64BitInstallMode
+
+; --- Native x64 Files (installed on 64-bit x64 Windows OS) ---
+Source: "{{REDIST_DIR}}\x64\openssl.exe"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsX64Native
+Source: "{{REDIST_DIR}}\x64\libcrypto-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsX64Native
+Source: "{{REDIST_DIR}}\x64\libssl-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsX64Native
+Source: "{{REDIST_DIR}}\x64\providers\*.dll"; DestDir: "{code:Get64BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64Native
+Source: "{{REDIST_DIR}}\x64\engines\*.dll"; DestDir: "{code:Get64BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64Native
+
+; --- Native ARM64EC Files (installed on 64-bit ARM64 Windows OS) ---
+Source: "{{REDIST_DIR}}\arm64ec\openssl.exe"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64ec\libcrypto-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64ec\libssl-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64ec\providers\*.dll"; DestDir: "{code:Get64BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64ec\engines\*.dll"; DestDir: "{code:Get64BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
+
+; --- 32-bit (x86) Compatibility Files (installed on 64-bit Windows OS when selected) ---
+Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libcrypto-*.dll"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\libssl-*.dll"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{code:Get32BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
+Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{code:Get32BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
+
+[Icons]
+#ifexist "{{ASSETS_DIR}}\app.ico"
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={code:GetNativeBinDir};%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+#else
+Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={code:GetNativeBinDir};%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"
+#endif
+
+Name: "{group}\Uninstall OpenSSL {{VERSION}}"; Filename: "{uninstallexe}"
+
+[Code]
+function IsX64Native(): Boolean;
+begin
+  Result := (ProcessorArchitecture = paX64);
+end;
+
+function IsArm64Native(): Boolean;
+begin
+  Result := (ProcessorArchitecture = paARM64);
+end;
+
+function Get64BitDir(Param: string): string;
+begin
+  if IsAdminInstallMode then
+    Result := ExpandConstant('{app}')
+  else
+    Result := ExpandConstant('{app}\x64');
+end;
+
+function Get32BitDir(Param: string): string;
+begin
+  if IsAdminInstallMode then
+  begin
+    if Is64BitInstallMode then
+      Result := ExpandConstant('{commonpf32}\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}')
+    else
+      Result := ExpandConstant('{app}');
+  end
+  else
+    Result := ExpandConstant('{app}\x86');
+end;
+
+function GetNativeBinDir(Param: string): string;
+begin
+  if Is64BitInstallMode then
+    Result := Get64BitDir('')
+  else
+    Result := Get32BitDir('');
+end;
+
+procedure AddToPath(Dir: string; Machine: Boolean);
+var RegPath, Path: string; RootKey: Integer;
+begin
+  if Machine then begin
+    RootKey := HKEY_LOCAL_MACHINE;
+    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  end else begin
+    RootKey := HKEY_CURRENT_USER;
+    RegPath := 'Environment';
+  end;
+  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Path := '';
+  if Pos(LowerCase(Dir), LowerCase(Path)) = 0 then begin
+    if (Length(Path) > 0) and (Path[Length(Path)] <> ';') then
+      Path := Path + ';';
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path + Dir);
+  end;
+end;
+
+procedure RemoveFromPath(Dir: string; Machine: Boolean);
+var RegPath, Path: string; RootKey, P: Integer;
+begin
+  if Machine then begin
+    RootKey := HKEY_LOCAL_MACHINE;
+    RegPath := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  end else begin
+    RootKey := HKEY_CURRENT_USER;
+    RegPath := 'Environment';
+  end;
+  if not RegQueryStringValue(RootKey, RegPath, 'Path', Path) then Exit;
+  P := Pos(';' + Dir, Path);
+  if P > 0 then begin
+    Delete(Path, P, 1 + Length(Dir));
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path); Exit;
+  end;
+  P := Pos(Dir + ';', Path);
+  if P > 0 then begin
+    Delete(Path, P, Length(Dir) + 1);
+    RegWriteStringValue(RootKey, RegPath, 'Path', Path);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
+  begin
+    AddToPath(GetNativeBinDir(''), IsAdminInstallMode);
+
+    if Is64BitInstallMode and WizardIsComponentSelected('x86compat') then
+      AddToPath(Get32BitDir(''), IsAdminInstallMode);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then begin
+    RemoveFromPath(Get64BitDir(''), True);
+    RemoveFromPath(Get64BitDir(''), False);
+    RemoveFromPath(Get32BitDir(''), True);
+    RemoveFromPath(Get32BitDir(''), False);
+  end;
+end;
