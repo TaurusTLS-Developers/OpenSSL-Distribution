@@ -16,18 +16,19 @@ OutputDir={{OUTPUT_DIR}}
 OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
 Compression=lzma2/ultra64
 SolidCompression=yes
-PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=commandline dialog
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog commandline
 DisableProgramGroupPage=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 
-; --- Branding Directives (Optional: Ignored if files are absent) ---
-#ifexist "assets\app.ico"
-SetupIconFile=assets\app.ico
+; --- Branding Directives (Resolved via {{ASSETS_DIR}}) ---
+#ifexist "{{ASSETS_DIR}}\app.ico"
+SetupIconFile={{ASSETS_DIR}}\app.ico
+UninstallDisplayIcon={app}\app.ico
 #endif
-#ifexist "assets\WizardSmallImage.bmp"
-WizardSmallImageFile=assets\WizardSmallImage.bmp
+#ifexist "{{ASSETS_DIR}}\WizardSmallImage.bmp"
+WizardSmallImageFile={{ASSETS_DIR}}\WizardSmallImage.bmp
 #endif
 
 [Types]
@@ -36,8 +37,8 @@ Name: "full";     Description: "Full Installation (Native + 32-bit x86 Compatibi
 Name: "custom";   Description: "Custom Installation"; Flags: iscustom
 
 [Components]
-Name: "native";    Description: "Native OpenSSL Runtime (bin64 on 64-bit OS, bin32 on 32-bit OS)"; Types: standard full custom; Flags: fixed
-Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime"; Types: full custom; Check: Is64BitInstallMode
+Name: "native";    Description: "Native OpenSSL Runtime"; Types: standard full custom; Flags: fixed
+Name: "x86compat"; Description: "32-bit (x86) Compatibility Runtime"; Types: full; Flags: dontinheritcheck; Check: Is64BitInstallMode
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -49,9 +50,9 @@ Name: addtopath; Description: "Add OpenSSL directory to system &PATH"; Component
 ; License
 Source: "{{REDIST_DIR}}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
-; Optional: Branding Icon for Start Menu shortcut
-#ifexist "assets\app.ico"
-Source: "assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
+; Optional: Branding Icon for Start Menu shortcut & Uninstaller DisplayIcon
+#ifexist "{{ASSETS_DIR}}\app.ico"
+Source: "{{ASSETS_DIR}}\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
 ; --- Native x86 Files (installed on 32-bit Windows OS) ---
@@ -83,8 +84,7 @@ Source: "{{REDIST_DIR}}\x86\providers\*.dll"; DestDir: "{code:Get32BitDir}\provi
 Source: "{{REDIST_DIR}}\x86\engines\*.dll"; DestDir: "{code:Get32BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: x86compat; Check: Is64BitInstallMode
 
 [Icons]
-; Start Menu Command Prompt Shortcuts pointing to active native directory
-#ifexist "assets\app.ico"
+#ifexist "{{ASSETS_DIR}}\app.ico"
 Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={code:GetNativeBinDir};%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
 #else
 Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""set PATH={code:GetNativeBinDir};%PATH% & title OpenSSL {{VERSION}} Environment & echo OpenSSL {{VERSION}} Command Prompt Ready."""; WorkingDir: "{app}"
@@ -93,20 +93,16 @@ Name: "{group}\OpenSSL {{VERSION}} Command Prompt"; Filename: "{cmd}"; Parameter
 Name: "{group}\Uninstall OpenSSL {{VERSION}}"; Filename: "{uninstallexe}"
 
 [Code]
-
-// Helper function to detect true native x64 processor
 function IsX64Native(): Boolean;
 begin
   Result := (ProcessorArchitecture = paX64);
 end;
 
-// Helper function to detect true native ARM64 processor
 function IsArm64Native(): Boolean;
 begin
   Result := (ProcessorArchitecture = paARM64);
 end;
 
-// Resolves target directory for 64-bit binaries
 function Get64BitDir(Param: string): string;
 begin
   if IsAdminInstallMode then
@@ -115,7 +111,6 @@ begin
     Result := ExpandConstant('{app}\x64');
 end;
 
-// Resolves target directory for 32-bit binaries
 function Get32BitDir(Param: string): string;
 begin
   if IsAdminInstallMode then
@@ -129,7 +124,6 @@ begin
     Result := ExpandConstant('{app}\x86');
 end;
 
-// Resolves native binary directory for Start Menu shortcut
 function GetNativeBinDir(Param: string): string;
 begin
   if Is64BitInstallMode then
@@ -183,10 +177,8 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
   begin
-    // Always add the native binary directory to PATH
     AddToPath(GetNativeBinDir(''), IsAdminInstallMode);
 
-    // If 32-bit compatibility component was selected on 64-bit OS, also add 32-bit directory to PATH
     if Is64BitInstallMode and WizardIsComponentSelected('x86compat') then
       AddToPath(Get32BitDir(''), IsAdminInstallMode);
   end;

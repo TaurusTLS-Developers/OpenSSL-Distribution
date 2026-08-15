@@ -713,6 +713,7 @@ jobs:
           $appId     = 'B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5'
           $wsDir     = $env:GITHUB_WORKSPACE
           $redistDir = "$wsDir\redist"
+          $assetsDir = "$wsDir\assets"
           $pubName   = $env:APP_PUBLISHER
           $pubUrl    = $env:APP_PUBLISHER_URL
 
@@ -721,14 +722,17 @@ jobs:
           # Substitute template parameters
           $templatePath = "$wsDir\config\openssl-installer.iss.template"
           $outFilename  = "openssl-$version-Windows-installer"
-          $iss = (Get-Content $templatePath -Raw)
+          
+          $iss = Get-Content $templatePath -Raw
           $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
           $iss = $iss.Replace('{{VERSION}}', $version)
           $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
+          $iss = $iss.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
           $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
           $iss = $iss.Replace('{{OUTPUT_DIR}}', "$wsDir\installers")
           $iss = $iss.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename)
           $iss = $iss.Replace('{{REDIST_DIR}}', $redistDir)
+          $iss = $iss.Replace('{{ASSETS_DIR}}', $assetsDir)
 
           $issPath = "$wsDir\openssl-installer.iss"
           [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
@@ -748,7 +752,7 @@ jobs:
           & $iscc $issPath
           if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
           Write-Host "✅ Multi-Arch InnoSetup installer compiled."
-
+          
       - name: Azure Login
         uses: azure/login@v2
         with:
