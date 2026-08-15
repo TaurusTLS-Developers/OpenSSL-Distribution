@@ -752,7 +752,7 @@ jobs:
           & $iscc $issPath
           if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
           Write-Host "✅ Multi-Arch InnoSetup installer compiled."
-          
+
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -1037,9 +1037,16 @@ jobs:
           # --- 1. Run InnoSetup Silent Installation ---
           $installer = Get-ChildItem "inno-installer" -Filter "*.exe" | Select-Object -ExpandProperty FullName -First 1
           Write-Host "Running InnoSetup Silent Install: $installer"
-          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /COMPONENTS="native,x86compat"
-          if ($LASTEXITCODE -ne 0) { throw "InnoSetup install failed (exit code $LASTEXITCODE)" }
 
+          $isArm64 = [System.Convert]::ToBoolean('${{ matrix.is_arm64 }}')
+
+          # On ARM64, install only 'native'. On x64, install both 'native' and 'x86compat'.
+          $components = if ($isArm64) { "native" } else { "native,x86compat" }
+          Write-Host "Selected components for install: $components"
+
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/COMPONENTS=$components"
+          if ($LASTEXITCODE -ne 0) { throw "InnoSetup install failed (exit code $LASTEXITCODE)" }
+          
           # --- 2. Test Installed Binaries ---
           $isArm64 = [System.Convert]::ToBoolean('${{ matrix.is_arm64 }}')
           if ($isArm64) {
