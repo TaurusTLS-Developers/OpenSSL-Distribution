@@ -16,6 +16,7 @@ OutputDir={{OUTPUT_DIR}}
 OutputBaseFilename={{OUTPUT_BASE_FILENAME}}
 Compression=lzma2/ultra64
 SolidCompression=yes
+LicenseFile={{REDIST_DIR}}\LICENSE.txt
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 DisableProgramGroupPage=yes
