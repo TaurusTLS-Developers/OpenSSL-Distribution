@@ -79,7 +79,7 @@ jobs:
           echo "artifact_version=$ARTIFACT_VERSION" >> $GITHUB_OUTPUT
           echo "slugified_version=$SLUGIFIED_VERSION" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
   # =========================================================================
   # 1. COMPILE SLICES IN PARALLEL (Native ARM64 + ARM64EC)
   # =========================================================================
@@ -257,24 +257,23 @@ jobs:
           echo ===================================================
           echo 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
           echo ===================================================
+          :: Fixed folder path to slice-arm64ec-static
           lib.exe /NOLOGO /MACHINE:ARM64X ^
             /OUT:"%DIST%\lib\static\libcrypto.lib" ^
             "slice-arm64-static\lib\static\libcrypto.lib" ^
-            "slice-arm64ec\lib\static\libcrypto.lib"
+            "slice-arm64ec-static\lib\static\libcrypto.lib"
 
           lib.exe /NOLOGO /MACHINE:ARM64X ^
             /OUT:"%DIST%\lib\static\libssl.lib" ^
             "slice-arm64-static\lib\static\libssl.lib" ^
-            "slice-arm64ec\lib\static\libssl.lib"
+            "slice-arm64ec-static\lib\static\libssl.lib"
 
           echo ===================================================
-          echo 2. COPY SHARED RUNTIME & ENGINES
+          echo 2. COPY SHARED RUNTIME AND ENGINES
           echo ===================================================
-          :: For testing: Start by using the native/EC outputs and verified modules
           xcopy /E /I /Y "slice-arm64ec-shared\engines\*" "%DIST%\engines\" 2>nul || ver >nul
           xcopy /E /I /Y "slice-arm64ec-shared\providers\*" "%DIST%\providers\" 2>nul || ver >nul
 
-          :: Use the unified ARM64EC/Native DLLs and unified import libraries
           copy /Y "slice-arm64ec-shared\*.dll" "%DIST%\"
           copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST%\"
           copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST%\lib\import\"
