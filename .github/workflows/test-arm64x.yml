@@ -1,0 +1,289 @@
+name: Test ARM64X Build
+run-name: Test ARM64X OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Source: OpenSSL Release or OpenSSL Branch/OpenSSL fork'
+        required: true
+        type: choice
+        options:
+          - release
+          - branch
+        default: release
+      version:
+        description: 'OpenSSL Release Version or Branch (e.g. 3.4.0, master)'
+        required: true
+        type: string
+        default: '3.4.0'
+      ignore_eol:
+        description: 'Ignore EOL Check'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # =========================================================================
+  # 0. VALIDATE VERSION
+  # =========================================================================
+  validate-version:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      target_repo: ${{ steps.check.outputs.target_repo }}
+      ref: ${{ steps.check.outputs.ref }}
+      sha: ${{ steps.check.outputs.sha }}
+      artifact_version: ${{ steps.check.outputs.artifact_version }}
+      slugified_version: ${{ steps.check.outputs.slugified_version }}
+      is_fork: ${{ steps.check.outputs.is_fork }}
+    steps:
+      - name: Check EOL or Branch Existence
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          BUILD_TYPE="${{ inputs.build_type }}"
+          TARGET_REPO="openssl/openssl"
+          IS_FORK="false"
+          
+          if [ "$BUILD_TYPE" == "release" ]; then
+            TARGET_REF="openssl-$VERSION"
+            SHA=$(git ls-remote --tags https://github.com/$TARGET_REPO.git "$TARGET_REF" | awk '{print $1}')
+            if [ -z "$SHA" ]; then
+              echo "❌ Tag '$TARGET_REF' not found."
+              exit 1
+            fi
+            ARTIFACT_VERSION="$VERSION"
+            SLUGIFIED_VERSION="$VERSION"
+          else
+            TARGET_REF="$VERSION"
+            SHA=$(git ls-remote https://github.com/$TARGET_REPO.git "$TARGET_REF" | awk '{print $1}')
+            TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+            SLUGIFIED_VERSION=$(echo "$VERSION" | sed 's/\//_/g')
+            SAFE_PART=$(echo "$SLUGIFIED_VERSION" | cut -c 1-100)
+            ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
+          fi
+          
+          echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
+          echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
+          echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "artifact_version=$ARTIFACT_VERSION" >> $GITHUB_OUTPUT
+          echo "slugified_version=$SLUGIFIED_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  # =========================================================================
+  # 1. COMPILE SLICES IN PARALLEL (Native ARM64 + ARM64EC)
+  # =========================================================================
+  compile-slices:
+    name: Compile Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        linkage: [shared, static]
+        slice:
+          # Slice A: Native ARM64
+          - { label: native-arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
+          # Slice B: ARM64EC (Emulation Compatible)
+          - { label: arm64ec,      target: VC-ARM64EC,   vcvars: amd64_arm64 }
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.validate-version.outputs.target_repo }}
+          ref: ${{ needs.validate-version.outputs.sha }}
+
+      - name: Prepare HybridCRT Targets
+        shell: bash
+        run: |
+          cat << 'EOF' > Configurations/99-arm64x-prep.conf
+          my %targets = (
+              # Native ARM64 Slice (Forces multilib to -arm64)
+              "VC-WIN64-ARM-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "tests", "makedepend" ],
+                  multilib     => "-arm64",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-WIN64-ARM-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "tests", "makedepend" ],
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+
+              # ARM64EC Slice (Forces multilib to -arm64 so DLL names match)
+              "VC-ARM64EC-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "asm", "tests", "makedepend" ],
+                  multilib     => "-arm64",
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-ARM64EC-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "asm", "tests", "makedepend" ],
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+          );
+          EOF
+
+      - name: Compile and Stage Slice Binaries
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.slice.vcvars }}
+          
+          set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
+          set "STAGED=%GITHUB_WORKSPACE%\slice_out"
+          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def"
+
+          set "LINK_UPPER=${{ matrix.linkage }}"
+          if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
+
+          perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
+          nmake && nmake install_sw
+
+          :: Stage artifacts and preserve build-time .def / .obj files needed for ARM64X linking
+          if "${{ matrix.linkage }}"=="shared" (
+              if exist "%INSTALL_TEMP%\bin\openssl.exe" copy "%INSTALL_TEMP%\bin\openssl.exe" "%STAGED%\"
+              copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
+              if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
+              if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
+              
+              :: Preserve OpenSSL-generated .def files
+              if exist "*.def" copy "*.def" "%STAGED%\def\"
+              if exist "util\*.def" copy "util\*.def" "%STAGED%\def\"
+          ) else (
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
+          )
+
+      - name: Upload Slice Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: slice-${{ matrix.slice.label }}-${{ matrix.linkage }}-${{ github.run_id }}
+          path: slice_out/
+          retention-days: 1
+
+  # =========================================================================
+  # 2. MERGE INTO ARM64X (Fan-In Master Linker)
+  # =========================================================================
+  merge-arm64x:
+    name: Merge & Link ARM64X Binaries
+    needs: [validate-version, compile-slices]
+    runs-on: windows-latest
+    steps:
+      - name: Download Native ARM64 Shared Slice
+        uses: actions/download-artifact@v7
+        with:
+          name: slice-native-arm64-shared-${{ github.run_id }}
+          path: slice-arm64-shared
+
+      - name: Download Native ARM64 Static Slice
+        uses: actions/download-artifact@v7
+        with:
+          name: slice-native-arm64-static-${{ github.run_id }}
+          path: slice-arm64-static
+
+      - name: Download ARM64EC Shared Slice
+        uses: actions/download-artifact@v7
+        with:
+          name: slice-arm64ec-shared-${{ github.run_id }}
+          path: slice-arm64ec-shared
+
+      - name: Download ARM64EC Static Slice
+        uses: actions/download-artifact@v7
+        with:
+          name: slice-arm64ec-static-${{ github.run_id }}
+          path: slice-arm64ec-static
+
+      - name: Link and Create ARM64X Binaries
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          
+          set "DIST=%GITHUB_WORKSPACE%\raw_artifact\dist"
+          mkdir "%DIST%\lib\static" "%DIST%\lib\import" "%DIST%\engines" "%DIST%\providers"
+
+          echo ===================================================
+          echo 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
+          echo ===================================================
+          lib.exe /NOLOGO /MACHINE:ARM64X ^
+            /OUT:"%DIST%\lib\static\libcrypto.lib" ^
+            "slice-arm64-static\lib\static\libcrypto.lib" ^
+            "slice-arm64ec\lib\static\libcrypto.lib"
+
+          lib.exe /NOLOGO /MACHINE:ARM64X ^
+            /OUT:"%DIST%\lib\static\libssl.lib" ^
+            "slice-arm64-static\lib\static\libssl.lib" ^
+            "slice-arm64ec\lib\static\libssl.lib"
+
+          echo ===================================================
+          echo 2. COPY SHARED RUNTIME & ENGINES
+          echo ===================================================
+          :: For testing: Start by using the native/EC outputs and verified modules
+          xcopy /E /I /Y "slice-arm64ec-shared\engines\*" "%DIST%\engines\" 2>nul || ver >nul
+          xcopy /E /I /Y "slice-arm64ec-shared\providers\*" "%DIST%\providers\" 2>nul || ver >nul
+
+          :: Use the unified ARM64EC/Native DLLs and unified import libraries
+          copy /Y "slice-arm64ec-shared\*.dll" "%DIST%\"
+          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST%\"
+          copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST%\lib\import\"
+
+          echo ===================================================
+          echo 3. INSPECT PE HEADERS (dumpbin /headers)
+          echo ===================================================
+          dumpbin.exe /headers "%DIST%\libcrypto-3-arm64.dll" | findstr /C:"machine"
+          dumpbin.exe /headers "%DIST%\lib\static\libcrypto.lib" | findstr /C:"machine"
+
+      - name: Upload Raw ARM64X Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          # Formatted exactly like build-openssl.yml raw artifacts for seamless downstream integration
+          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
+          path: raw_artifact/dist
+          retention-days: 5
