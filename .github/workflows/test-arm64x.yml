@@ -2,6 +2,9 @@ name: Test ARM64X Build
 run-name: Test ARM64X OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
 
 on:
+  push:
+    branches:
+      - arm64X
   workflow_dispatch:
     inputs:
       build_type:
@@ -44,8 +47,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ inputs.version }}"
-          BUILD_TYPE="${{ inputs.build_type }}"
+          # ---> REPLACE THE START OF THIS RUN BLOCK HERE <---
+          VERSION="${{ inputs.version || '3.4.0' }}"
+          BUILD_TYPE="${{ inputs.build_type || 'release' }}"
+          IGNORE_EOL="${{ inputs.ignore_eol || 'false' }}"
           TARGET_REPO="openssl/openssl"
           IS_FORK="false"
           
@@ -74,7 +79,7 @@ jobs:
           echo "artifact_version=$ARTIFACT_VERSION" >> $GITHUB_OUTPUT
           echo "slugified_version=$SLUGIFIED_VERSION" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
+          
   # =========================================================================
   # 1. COMPILE SLICES IN PARALLEL (Native ARM64 + ARM64EC)
   # =========================================================================
