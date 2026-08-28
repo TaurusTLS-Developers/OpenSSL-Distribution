@@ -370,12 +370,17 @@ jobs:
               
               $clientOutput = $httpRequest | & (Join-Path $binDir $ClientExe) s_client -connect "127.0.0.1:$Port" -CAfile $certPath -quiet 2>&1
               
+              # Convert array output to single multi-line string for reliable regex matching
+              $responseText = ($clientOutput | Out-String).Trim()
               Write-Host "--- Received HTTP Response ---"
-              Write-Host ($clientOutput | Out-String)
+              Write-Host $responseText
 
-              # Assert HTTP 200 response and OpenSSL status page
-              if ($clientOutput -notmatch "HTTP/1.0 200 ok" -or $clientOutput -notmatch "OpenSSL") {
-                throw "Cross-mode test failed! Expected HTTP 200 status page not received."
+              # Robust Assertions: Verify HTTP 200 OK and valid HTML payload
+              $hasHttp200  = $responseText -match "HTTP/1\.[01]\s+200\s+ok"
+              $hasHtmlBody = $responseText -match "(?i)</HTML>" -or $responseText -match "s_server"
+
+              if (-not $hasHttp200 -or -not $hasHtmlBody) {
+                throw "Cross-mode test failed! Valid HTTP 200 HTML status page not detected in response."
               }
 
               Write-Host "✅ [$ServerLabel Server <-> $ClientLabel Client] Cross-Mode TLS Handshake & HTTP Status Page PASSED!"
@@ -402,4 +407,5 @@ jobs:
                             -Port 44332
 
           Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Host "`n🎉 All ARM64X cross-mode cryptographic, network, and execution tests completed successfully!"        
+          Write-Host "`n🎉 All ARM64X cross-mode cryptographic, network, and execution tests completed successfully!"
+          
