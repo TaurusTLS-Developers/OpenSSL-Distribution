@@ -275,7 +275,9 @@ jobs:
           xcopy /E /I /Y "slice-arm64ec-shared\providers\*" "%DIST%\providers\" 2>nul || ver >nul
 
           copy /Y "slice-arm64ec-shared\*.dll" "%DIST%\"
-          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST%\"
+          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST%\openssl.exe"
+          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST%\openssl_arm64ec.exe"
+          copy /Y "slice-arm64-shared\openssl.exe" "%DIST%\openssl_arm64.exe"
           copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST%\lib\import\"
 
           echo ===================================================
@@ -291,3 +293,113 @@ jobs:
           name: raw-Windows-arm64ec-shared-${{ github.run_id }}
           path: raw_artifact/dist
           retention-days: 5
+
+  # =========================================================================
+  # 3. DEEP VERIFICATION ON NATIVE ARM64 (Cross-Mode TLS & HTTP Loopback)
+  # =========================================================================
+  verify-arm64x:
+    name: Verify ARM64X (Native ARM64 vs ARM64EC)
+    needs: [validate-version, merge-arm64x]
+    runs-on: windows-11-arm
+    steps:
+      - name: Download Raw ARM64X Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
+          path: bin
+
+      - name: Verify Execution in Both Native and ARM64EC Modes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cd "$env:GITHUB_WORKSPACE\bin"
+
+          Write-Host "=== 1. Testing Native ARM64 openssl.exe ==="
+          .\openssl_arm64.exe version -a
+          if ($LASTEXITCODE -ne 0) { throw "Native ARM64 openssl execution failed" }
+
+          Write-Host "`n=== 2. Testing ARM64EC openssl.exe ==="
+          .\openssl_arm64ec.exe version -a
+          if ($LASTEXITCODE -ne 0) { throw "ARM64EC openssl execution failed" }
+
+      - name: Cross-Mode TLS Handshake & HTTP Status Page Verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binDir = "$env:GITHUB_WORKSPACE\bin"
+          cd $binDir
+
+          $testDir = New-Item -ItemType Directory -Path "$env:TEMP\ossl_arm64x_$(Get-Random)"
+          $keyPath  = "$testDir\server.key"
+          $certPath = "$testDir\server.crt"
+
+          # 1. Generate Test Certificate using Native ARM64 binary
+          Write-Host "Generating test certificate with Native ARM64 openssl..."
+          & ".\openssl_arm64.exe" req -x509 -newkey rsa:2048 -keyout $keyPath -out $certPath -days 1 -nodes -subj "/CN=localhost"
+          if ($LASTEXITCODE -ne 0) { throw "Certificate generation failed" }
+
+          # Helper function for cross-mode testing
+          function Test-CrossModeTls {
+            param (
+              [string]$ServerExe,
+              [string]$ClientExe,
+              [string]$ServerLabel,
+              [string]$ClientLabel,
+              [int]$Port
+            )
+
+            Write-Host "`n========================================================"
+            Write-Host " Server: [$ServerLabel]  <--->  Client: [$ClientLabel]"
+            Write-Host " Port:   $Port"
+            Write-Host "========================================================"
+
+            $serverProc = $null
+            try {
+              # Start s_server in background with -www (HTTP status page)
+              Write-Host "Starting [$ServerLabel] s_server -www on port $Port..."
+              $serverProc = Start-Process -FilePath (Join-Path $binDir $ServerExe) `
+                -ArgumentList "s_server", "-accept", "$Port", "-cert", "`"$certPath`"", "-key", "`"$keyPath`"", "-www", "-quiet" `
+                -PassThru -NoNewWindow
+
+              Start-Sleep -Seconds 2
+              if ($serverProc.HasExited) { throw "[$ServerLabel] s_server failed to start" }
+
+              # Send HTTP GET request via s_client
+              Write-Host "Connecting with [$ClientLabel] s_client and requesting status page..."
+              $httpRequest = "GET / HTTP/1.0`r`nHost: localhost`r`n`r`n"
+              
+              $clientOutput = $httpRequest | & (Join-Path $binDir $ClientExe) s_client -connect "127.0.0.1:$Port" -CAfile $certPath -quiet 2>&1
+              
+              Write-Host "--- Received HTTP Response ---"
+              Write-Host ($clientOutput | Out-String)
+
+              # Assert HTTP 200 response and OpenSSL status page
+              if ($clientOutput -notmatch "HTTP/1.0 200 ok" -or $clientOutput -notmatch "OpenSSL") {
+                throw "Cross-mode test failed! Expected HTTP 200 status page not received."
+              }
+
+              Write-Host "✅ [$ServerLabel Server <-> $ClientLabel Client] Cross-Mode TLS Handshake & HTTP Status Page PASSED!"
+            } finally {
+              if ($serverProc -and -not $serverProc.HasExited) {
+                Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue
+              }
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          # --- Test Variant A: Native ARM64 Server <-> ARM64EC Client ---
+          Test-CrossModeTls -ServerExe "openssl_arm64.exe" `
+                            -ClientExe "openssl_arm64ec.exe" `
+                            -ServerLabel "Native ARM64" `
+                            -ClientLabel "ARM64EC" `
+                            -Port 44331
+
+          # --- Test Variant B: ARM64EC Server <-> Native ARM64 Client ---
+          Test-CrossModeTls -ServerExe "openssl_arm64ec.exe" `
+                            -ClientExe "openssl_arm64.exe" `
+                            -ServerLabel "ARM64EC" `
+                            -ClientLabel "Native ARM64" `
+                            -Port 44332
+
+          Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "`n🎉 All ARM64X cross-mode cryptographic, network, and execution tests completed successfully!"        
