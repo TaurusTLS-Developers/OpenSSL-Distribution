@@ -740,12 +740,9 @@ jobs:
               if exist "providers\*.def" copy "providers\*.def" "%STAGED%\def\"
               if exist "engines\*.def" copy "engines\*.def" "%STAGED%\def\"
               
-              :: Preserve all objects and archives from engines and providers build trees
+              :: Preserve directory structure of object files for engines and providers
               xcopy /S /Y /I "engines\*.obj" "%STAGED%\build_objs\engines\" 2>nul || ver >nul
-              xcopy /S /Y /I "engines\*.res" "%STAGED%\build_objs\engines\" 2>nul || ver >nul
               xcopy /S /Y /I "providers\*.obj" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
-              xcopy /S /Y /I "providers\*.res" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
-              xcopy /S /Y /I "providers\*.lib" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
           ) else (
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
           )
