@@ -917,7 +917,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dist = "$env:GITHUB_WORKSPACE\raw_artifact\dist"
+          # Point to raw_shared\dist where shared binaries are staged
+          $dist = "$env:GITHUB_WORKSPACE\raw_shared\dist"
 
           # Locate dumpbin.exe
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -926,18 +927,30 @@ jobs:
             Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
 
           Write-Host "Using Dumpbin: $dumpbin"
+          Write-Host "Inspecting Directory: $dist"
 
           # 1. Verify openssl.exe is Pure Native ARM64 (AA64)
-          Write-Host "`n=== Checking openssl.exe (Must be Native ARM64) ==="
-          $exeHeaders = & $dumpbin /headers "$dist\openssl.exe" | Out-String
-          if ($exeHeaders -notmatch "AA64 machine \(ARM64\)") {
-            throw "openssl.exe failed verification: Not native ARM64!"
+          $exePath = "$dist\openssl.exe"
+          Write-Host "`n=== Checking openssl.exe: $exePath ==="
+          if (-not (Test-Path $exePath)) {
+            throw "openssl.exe not found at $exePath!"
           }
-          Write-Host "✅ openssl.exe is confirmed Native ARM64 (AA64)"
+
+          $exeHeaders = & $dumpbin /headers $exePath | Out-String
+          Write-Host "--- dumpbin /headers openssl.exe output ---"
+          Write-Host $exeHeaders
+
+          $isNativeArm64 = $exeHeaders -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $exeHeaders -match "(?i)machine\s+\(ARM64\)"
+          Write-Host "Comparison: Pattern='AA64 machine (ARM64)' | Matched=$isNativeArm64"
+
+          if (-not $isNativeArm64) {
+            throw "openssl.exe failed verification: Output does not match Native ARM64 (AA64)!"
+          }
+          Write-Host "✅ openssl.exe is confirmed Native ARM64"
 
           # 2. Recursively verify EVERY DLL in dist/, providers/, and engines/
           $allDlls = Get-ChildItem $dist -Recurse -Filter "*.dll"
-          if ($allDlls.Count -eq 0) { throw "No DLLs found in dist directory!" }
+          if ($allDlls.Count -eq 0) { throw "No DLLs found in $dist directory!" }
 
           Write-Host "`n=== Recursively Verifying All ($($allDlls.Count)) DLLs for ARM64X ==="
           $failed = $false
@@ -949,20 +962,25 @@ jobs:
             $headers    = & $dumpbin /headers $dll.FullName | Out-String
             $loadConfig = & $dumpbin /loadconfig $dll.FullName | Out-String
 
-            # Check A: Header must be AA64 (ARM64X)
-            $isArm64XHeader = $headers -match "AA64 machine \(ARM64\) \(ARM64X\)" -or $headers -match "machine \(ARM64X\)"
+            Write-Host "--- dumpbin machine line ($relPath) ---"
+            Write-Host ($headers | Select-String "machine").Line
+
+            # Check A: Header must contain (ARM64X)
+            $isArm64XHeader = $headers -match "(?i)machine\s+\(.*ARM64X.*\)"
             
             # Check B: Must contain Dynamic Value Relocation Table (DVRT) storing the EC slice
-            $hasDvrt = $loadConfig -match "Dynamic Value Relocation Table" -or $loadConfig -match "ARM64X"
+            $hasDvrt = $loadConfig -match "(?i)Dynamic Value Relocation Table" -or $loadConfig -match "(?i)ARM64X"
+
+            Write-Host "  -> Comparison: Header ARM64X=$isArm64XHeader | DVRT table=$hasDvrt"
 
             if (-not $isArm64XHeader) {
-              Write-Error "FAILED: $relPath does not have the AA64 (ARM64X) PE machine header!"
+              Write-Error "FAILED: $relPath does not have the ARM64X PE machine header!"
               $failed = $true
             } elseif (-not $hasDvrt) {
               Write-Error "FAILED: $relPath is missing the Dynamic Value Relocation Table (EC slice not embedded)!"
               $failed = $true
             } else {
-              Write-Host "    -> Verified: AA64 (ARM64X) + DVRT Table Present."
+              Write-Host "    -> Verified: True ARM64X dual-architecture binary."
             }
           }
 
@@ -971,7 +989,7 @@ jobs:
           }
 
           Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
-
+          
       - name: Upload Raw ARM64 Shared Artifact
         uses: actions/upload-artifact@v7
         with:
