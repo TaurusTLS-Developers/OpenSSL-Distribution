@@ -938,6 +938,7 @@ jobs:
                 "`"$engObjArm64`"",
                 "`"$engObjArm64ec`"",
                 "`"$distShared\lib\import\libcrypto.lib`"",
+                "`"$distStatic\lib\static\libcrypto.lib`"", # <--- ADD THIS LINE
                 "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
                 "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
               )
