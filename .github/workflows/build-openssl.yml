@@ -873,47 +873,38 @@ jobs:
               $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
               [IO.File]::WriteAllText($moduleDef, $defContent)
 
-              # 3. Selective Object Resolution based on Module Classification
+              # 3. Clean, Isolated Object Resolution (No duplicate default/crypto objects!)
               if ($SubDir -eq "providers") {
-                # For Providers (e.g. legacy.dll):
-                # Include driver objects (*legacy*.obj), implementation objects (liblegacy-lib-*.obj),
-                # and common provider context helpers (providers/common/*.obj).
-                # Explicitly excludes libdefault, libcrypto, and other provider objects.
-                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\providers" -Recurse -File |
-                  Where-Object { 
-                    $_.Name -match "^(.*-dso-)?$moduleName" -or 
-                    $_.Name -match "^lib$moduleName-lib-" -or 
-                    $_.DirectoryName -match '\\common$'
-                  } | Select-Object -ExpandProperty FullName)
+                # Providers: Select ONLY objects compiled for this specific provider (e.g. *legacy*.obj)
+                # Strictly EXCLUDE libdefault-*, libcrypto-*, and baseprov objects!
+                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\providers" -Recurse -File -Filter "*$moduleName*.obj" |
+                  Where-Object { $_.Name -notmatch '^libdefault-' -and $_.Name -notmatch '^libcrypto-' } |
+                  Select-Object -ExpandProperty FullName)
 
-                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\providers" -Recurse -File |
-                  Where-Object { 
-                    $_.Name -match "^(.*-dso-)?$moduleName" -or 
-                    $_.Name -match "^lib$moduleName-lib-" -or 
-                    $_.DirectoryName -match '\\common$'
-                  } | Select-Object -ExpandProperty FullName)
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\providers" -Recurse -File -Filter "*$moduleName*.obj" |
+                  Where-Object { $_.Name -notmatch '^libdefault-' -and $_.Name -notmatch '^libcrypto-' } |
+                  Select-Object -ExpandProperty FullName)
               } else {
-                # For Engines (e.g. capi.dll, padlock.dll, loader_attic.dll):
-                # Only include objects specifically compiled for this engine
-                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\engines" -Recurse -File |
-                  Where-Object { $_.Name -match "(^|_)e?$moduleName" } | Select-Object -ExpandProperty FullName)
+                # Engines: Select ONLY objects compiled for this specific engine (e.g. *capi*.obj)
+                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\engines" -Recurse -File -Filter "*$moduleName*.obj" |
+                  Select-Object -ExpandProperty FullName)
 
-                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\engines" -Recurse -File |
-                  Where-Object { $_.Name -match "(^|_)e?$moduleName" } | Select-Object -ExpandProperty FullName)
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\engines" -Recurse -File -Filter "*$moduleName*.obj" |
+                  Select-Object -ExpandProperty FullName)
               }
 
               Write-Host "     [+] Resolved objects: Native ARM64 = $($objsArm64.Count), ARM64EC = $($objsArm64ec.Count)"
 
               if ($objsArm64.Count -eq 0) {
-                throw "FATAL: No Native ARM64 object files found to build $SubDir\$dllName!"
+                throw "FATAL: No Native ARM64 object files found for $SubDir\$dllName!"
               }
               if ($objsArm64ec.Count -eq 0) {
-                throw "FATAL: No ARM64EC object files found to build $SubDir\$dllName!"
+                throw "FATAL: No ARM64EC object files found for $SubDir\$dllName!"
               }
 
               $allObjs = $objsArm64 + $objsArm64ec
 
-              # 4. Write Response File (.rsp) with /DEF and /DEFARM64NATIVE
+              # 4. Write Response File (.rsp)
               $moduleRsp = "$wsDir\link_$moduleName.rsp"
               $rspLines = @(
                 "/NOLOGO",
@@ -929,7 +920,7 @@ jobs:
 
               [IO.File]::WriteAllLines($moduleRsp, $rspLines)
 
-              # 5. Link the True ARM64X Module DLL (Strict: Throw on ANY failure!)
+              # 5. Link the True ARM64X Module DLL
               cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
               if ($LASTEXITCODE -ne 0) {
                 throw "FATAL: link.exe failed to create true ARM64X module $SubDir\$dllName with exit code $LASTEXITCODE!"
