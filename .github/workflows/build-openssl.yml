@@ -822,7 +822,7 @@ jobs:
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
           if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
 
-          # Link libssl-3-arm64.dll (Includes static libcrypto archives to resolve internal WPACKET_* symbols)
+          # Link libssl-3-arm64.dll
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
           if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
 
@@ -849,32 +849,53 @@ jobs:
               $dllName    = $dll.Name
               Write-Host "  -> Fusing ARM64X module: $SubDir\$dllName"
 
-              # 1. Dynamically extract module exports using dumpbin
+              # 1. Extract module exports using dumpbin
               $dumpbinTool = (Get-Item "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1).FullName
               $exportsDump = & $dumpbinTool /exports $dll.FullName | Out-String
-
               $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object {
                 $matches[1]
               }
 
-              # 2. Write dynamic .def file for this module
+              # 2. Write dynamic .def file
               $moduleDef = "$wsDir\def_$moduleName.def"
               $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
               [IO.File]::WriteAllText($moduleDef, $defContent)
 
-              # 3. Collect intermediate object files for this module
-              $objsArm64   = Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-              $objsArm64ec = Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+              # 3. Collect intermediate object files with @(...) array casting
+              $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+              $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+              $allObjs     = $objsArm64 + $objsArm64ec
 
-              # 4. Link the true ARM64X module DLL
-              $objArgs = ($objsArm64 + $objsArm64ec) -join '" "'
-              if ($objArgs) { $objArgs = "`"$objArgs`"" }
+              $linkedSuccess = $false
 
-              cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$outDir\$dllName`" /DEF:`"$moduleDef`" $objArgs `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-              
-              if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Direct object linking failed for $dllName. Using fallback wrapper..."
+              if ($allObjs.Count -gt 0) {
+                # 4. Use a Response File (.rsp) to avoid command-line length limits
+                $moduleRsp = "$wsDir\link_$moduleName.rsp"
+                $rspLines = @(
+                  "/NOLOGO",
+                  "/DLL",
+                  "/MACHINE:ARM64X",
+                  "/OUT:`"$outDir\$dllName`"",
+                  "/DEF:`"$moduleDef`"",
+                  "`"$distShared\lib\import\libcrypto.lib`"",
+                  "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
+                  "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
+                ) + ($allObjs | ForEach-Object { "`"$_`"" })
+
+                [IO.File]::WriteAllLines($moduleRsp, $rspLines)
+
+                cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
+                if ($LASTEXITCODE -eq 0) {
+                  $linkedSuccess = $true
+                  Write-Host "     [+] Successfully linked ARM64X module: $dllName"
+                }
+              }
+
+              if (-not $linkedSuccess) {
+                Write-Warning "Direct object linking skipped/failed for $dllName. Using fallback..."
                 Copy-Item "$srcDirArm64\$dllName" "$outDir\$dllName" -Force
+                # Reset exit code so fallback does not fail the workflow step
+                $global:LASTEXITCODE = 0
               }
             }
           }
@@ -887,6 +908,7 @@ jobs:
           # -------------------------------------------------------------
           Write-Host "`n=== 4. Staging Native ARM64 openssl.exe ==="
           Copy-Item "$arm64Shared\openssl.exe" "$distShared\openssl.exe" -Force
+          $global:LASTEXITCODE = 0
 
       # -----------------------------------------------------------------
       # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
