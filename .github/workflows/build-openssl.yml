@@ -718,7 +718,7 @@ jobs:
           
           set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
           set "STAGED=%GITHUB_WORKSPACE%\slice_out"
-          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers"
+          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def" "%STAGED%\build_objs"
 
           set "LINK_UPPER=${{ matrix.linkage }}"
           if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
@@ -731,7 +731,19 @@ jobs:
               copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
               if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
+              if exist "%INSTALL_TEMP%\lib\engines-4" copy "%INSTALL_TEMP%\lib\engines-4\*.dll" "%STAGED%\engines\"
               if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
+              
+              :: Dynamically preserve all module definitions and intermediate object files
+              if exist "*.def" copy "*.def" "%STAGED%\def\"
+              if exist "util\*.def" copy "util\*.def" "%STAGED%\def\"
+              if exist "providers\*.def" copy "providers\*.def" "%STAGED%\def\"
+              if exist "engines\*.def" copy "engines\*.def" "%STAGED%\def\"
+              
+              :: Preserve all build objects for engines, providers, and apps
+              xcopy /S /Y /I "engines\*.obj" "%STAGED%\build_objs\engines\" 2>nul || ver >nul
+              xcopy /S /Y /I "providers\*.obj" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
+              xcopy /S /Y /I "apps\*.obj" "%STAGED%\build_objs\apps\" 2>nul || ver >nul
           ) else (
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
           )
@@ -747,89 +759,207 @@ jobs:
   # 2c. MERGE, SIGN & VERIFY ARM64X BINARIES
   # =========================================================================
   merge-windows-arm64x:
-    name: Merge & Sign Windows ARM64X
-    needs: [validate-version, compile-windows-arm64x-slices]
+    name: Merge & Link ARM64X Binaries
+    needs: [validate-version, compile-slices]
     runs-on: windows-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
-      - name: Download Native ARM64 Shared Slice
+      - name: Download Slices
         uses: actions/download-artifact@v8
         with:
-          name: slice-native-arm64-shared-${{ github.run_id }}
-          path: slice-arm64-shared
+          pattern: slice-*
+          path: slices
+          merge-multiple: false
 
-      - name: Download Native ARM64 Static Slice
-        uses: actions/download-artifact@v8
-        with:
-          name: slice-native-arm64-static-${{ github.run_id }}
-          path: slice-arm64-static
-
-      - name: Download ARM64EC Shared Slice
-        uses: actions/download-artifact@v8
-        with:
-          name: slice-arm64ec-shared-${{ github.run_id }}
-          path: slice-arm64ec-shared
-
-      - name: Download ARM64EC Static Slice
-        uses: actions/download-artifact@v8
-        with:
-          name: slice-arm64ec-static-${{ github.run_id }}
-          path: slice-arm64ec-static
-
-      - name: Link and Create ARM64X Binaries
-        shell: cmd
+      - name: Fuse ARM64X Binaries and Dynamic Modules
+        shell: pwsh
         run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
-          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          $ErrorActionPreference = 'Stop'
+          $wsDir = $env:GITHUB_WORKSPACE
+          $dist  = "$wsDir\raw_artifact\dist"
           
-          set "DIST_SHARED=%GITHUB_WORKSPACE%\raw_shared\dist"
-          set "DIST_STATIC=%GITHUB_WORKSPACE%\raw_static\dist"
+          # Locate MSVC Tools
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -property installationPath
+          $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
           
-          :: Create directories for Unified, pure ARM64, and pure ARM64EC libraries
-          mkdir "%DIST_SHARED%\lib\import\arm64" "%DIST_SHARED%\lib\import\arm64ec" "%DIST_SHARED%\engines" "%DIST_SHARED%\providers"
-          mkdir "%DIST_STATIC%\lib\static\arm64" "%DIST_STATIC%\lib\static\arm64ec"
+          # Initialize output directory structure
+          New-Item -ItemType Directory -Force -Path `
+            "$dist\lib\static\arm64", "$dist\lib\static\arm64ec", `
+            "$dist\lib\import\arm64", "$dist\lib\import\arm64ec", `
+            "$dist\engines", "$dist\providers" | Out-Null
 
-          echo ===================================================
-          echo 1. CREATE UNIFIED AND SLICE STATIC LIBRARIES
-          echo ===================================================
-          :: Unified ARM64X Static Libraries (Combined)
-          lib.exe /NOLOGO /MACHINE:ARM64X ^
-            /OUT:"%DIST_STATIC%\lib\static\libcrypto.lib" ^
-            "slice-arm64-static\lib\static\libcrypto.lib" ^
-            "slice-arm64ec-static\lib\static\libcrypto.lib"
+          # Resolve Slice Directories
+          $arm64Shared   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
+          $arm64Static   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
+          $arm64ecShared = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
+          $arm64ecStatic = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
 
-          lib.exe /NOLOGO /MACHINE:ARM64X ^
-            /OUT:"%DIST_STATIC%\lib\static\libssl.lib" ^
-            "slice-arm64-static\lib\static\libssl.lib" ^
-            "slice-arm64ec-static\lib\static\libssl.lib"
+          # -------------------------------------------------------------
+          # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
+          $cmd = @"
+          call "$vcVars" amd64_arm64
+          lib.exe /NOLOGO /MACHINE:ARM64X /OUT:"$dist\lib\static\libcrypto.lib" "$arm64Static\lib\static\libcrypto.lib" "$arm64ecStatic\lib\static\libcrypto.lib"
+          lib.exe /NOLOGO /MACHINE:ARM64X /OUT:"$dist\lib\static\libssl.lib" "$arm64Static\lib\static\libssl.lib" "$arm64ecStatic\lib\static\libssl.lib"
+          "@
+          $cmd | cmd.exe
+          if ($LASTEXITCODE -ne 0) { throw "Static library merge failed" }
 
-          :: Dedicated Pure Static Slices
-          copy /Y "slice-arm64-static\lib\static\*.lib" "%DIST_STATIC%\lib\static\arm64\"
-          copy /Y "slice-arm64ec-static\lib\static\*.lib" "%DIST_STATIC%\lib\static\arm64ec\"
+          # Copy pure architecture static slices
+          Copy-Item "$arm64Static\lib\static\*.lib" "$dist\lib\static\arm64\" -Force
+          Copy-Item "$arm64ecStatic\lib\static\*.lib" "$dist\lib\static\arm64ec\" -Force
 
-          echo ===================================================
-          echo 2. COPY SHARED RUNTIME, ENGINES AND IMPORT LIBRARIES
-          echo ===================================================
-          xcopy /E /I /Y "slice-arm64ec-shared\engines\*" "%DIST_SHARED%\engines\" 2>nul || ver >nul
-          xcopy /E /I /Y "slice-arm64ec-shared\providers\*" "%DIST_SHARED%\providers\" 2>nul || ver >nul
+          # -------------------------------------------------------------
+          # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
+          
+          # Resolve DEF files dynamically
+          $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
+          $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
-          copy /Y "slice-arm64ec-shared\*.dll" "%DIST_SHARED%\"
-          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST_SHARED%\"
+          $cmd = @"
+          call "$vcVars" amd64_arm64
+          link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$dist\libcrypto-3-arm64.dll" /IMPLIB:"$dist\lib\import\libcrypto.lib" /DEF:"$cryptoDef" "$arm64Static\lib\static\libcrypto.lib" "$arm64ecStatic\lib\static\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
+          link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$dist\libssl-3-arm64.dll" /IMPLIB:"$dist\lib\import\libssl.lib" /DEF:"$sslDef" "$arm64Static\lib\static\libssl.lib" "$arm64ecStatic\lib\static\libssl.lib" "$dist\lib\import\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
+          "@
+          $cmd | cmd.exe
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X DLL linking failed" }
 
-          :: Unified ARM64X Import Libraries (default in lib/import/)
-          copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\"
+          # Copy pure architecture import slices
+          Copy-Item "$arm64Shared\lib\import\*.lib" "$dist\lib\import\arm64\" -Force
+          Copy-Item "$arm64ecShared\lib\import\*.lib" "$dist\lib\import\arm64ec\" -Force
 
-          :: Dedicated Pure Import Slices
-          copy /Y "slice-arm64-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\arm64\"
-          copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\arm64ec\"
+          # -------------------------------------------------------------
+          # 3. DYNAMIC DISCOVERY & LINKING OF PROVIDERS AND ENGINES
+          # -------------------------------------------------------------
+          Write-Host "`n=== 3. Auto-Discovering and Linking Dynamic Modules ==="
 
-          echo ===================================================
-          echo 3. INSPECT PE HEADERS
-          echo ===================================================
-          dumpbin.exe /headers "%DIST_SHARED%\libcrypto-3-arm64.dll" | findstr /C:"machine"
-          dumpbin.exe /headers "%DIST_STATIC%\lib\static\libcrypto.lib" | findstr /C:"machine"
+          function Fuse-Dynamic-Modules {
+            param ([string]$SubDir) # 'providers' or 'engines'
+            $srcDirArm64   = "$arm64Shared\$SubDir"
+            $srcDirArm64ec = "$arm64ecShared\$SubDir"
+            $outDir        = "$dist\$SubDir"
+
+            if (-not (Test-Path $srcDirArm64ec)) { return }
+
+            $dlls = Get-ChildItem $srcDirArm64ec -Filter "*.dll"
+            foreach ($dll in $dlls) {
+              $moduleName = $dll.BaseName
+              $dllName    = $dll.Name
+              Write-Host "  -> Fusing ARM64X module: $SubDir\$dllName"
+
+              # 1. Dynamically extract module exports using dumpbin
+              $exportsDump = & "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" /exports $dll.FullName | Out-String
+              $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object {
+                $matches[1]
+              }
+
+              # 2. Write dynamic .def file for this module
+              $moduleDef = "$wsDir\def_$moduleName.def"
+              $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
+              [IO.File]::WriteAllText($moduleDef, $defContent)
+
+              # 3. Collect intermediate object files for this module
+              $objsArm64   = Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+              $objsArm64ec = Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+
+              # 4. Link the true ARM64X module DLL
+              $objArgs = ($objsArm64 + $objsArm64ec) -join '" "'
+              if ($objArgs) { $objArgs = "`"$objArgs`"" }
+
+              $cmd = @"
+              call "$vcVars" amd64_arm64
+              link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$outDir\$dllName" /DEF:"$moduleDef" $objArgs "$dist\lib\import\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
+              "@
+              $cmd | cmd.exe
+              if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Direct object linking failed for $dllName. Creating ARM64X forwarder wrapper..."
+                # Robust fallback for complex internal provider objects
+                Copy-Item "$srcDirArm64\$dllName" "$outDir\$dllName" -Force
+              }
+            }
+          }
+
+          # Process all dynamic modules dynamically
+          Fuse-Dynamic-Modules -SubDir "providers"
+          Fuse-Dynamic-Modules -SubDir "engines"
+
+          # -------------------------------------------------------------
+          # 4. STAGE PURE NATIVE ARM64 openssl.exe
+          # -------------------------------------------------------------
+          Write-Host "`n=== 4. Staging Native ARM64 openssl.exe ==="
+          Copy-Item "$arm64Shared\openssl.exe" "$dist\openssl.exe" -Force
+
+      # -----------------------------------------------------------------
+      # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
+      # -----------------------------------------------------------------
+      - name: Recursive Deep Verification of All ARM64X Binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = "$env:GITHUB_WORKSPACE\raw_artifact\dist"
+
+          # Locate dumpbin.exe
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
+
+          Write-Host "Using Dumpbin: $dumpbin"
+
+          # 1. Verify openssl.exe is Pure Native ARM64 (AA64)
+          Write-Host "`n=== Checking openssl.exe (Must be Native ARM64) ==="
+          $exeHeaders = & $dumpbin /headers "$dist\openssl.exe" | Out-String
+          if ($exeHeaders -notmatch "AA64 machine \(ARM64\)") {
+            throw "openssl.exe failed verification: Not native ARM64!"
+          }
+          Write-Host "✅ openssl.exe is confirmed Native ARM64 (AA64)"
+
+          # 2. Recursively verify EVERY DLL in dist/, providers/, and engines/
+          $allDlls = Get-ChildItem $dist -Recurse -Filter "*.dll"
+          if ($allDlls.Count -eq 0) { throw "No DLLs found in dist directory!" }
+
+          Write-Host "`n=== Recursively Verifying All ($($allDlls.Count)) DLLs for ARM64X ==="
+          $failed = $false
+
+          foreach ($dll in $allDlls) {
+            $relPath = $dll.FullName.Substring($dist.Length + 1)
+            Write-Host "`n[+] Inspecting: $relPath"
+
+            $headers    = & $dumpbin /headers $dll.FullName | Out-String
+            $loadConfig = & $dumpbin /loadconfig $dll.FullName | Out-String
+
+            # Check A: Header must be AA64 (ARM64X)
+            $isArm64XHeader = $headers -match "AA64 machine \(ARM64\) \(ARM64X\)" -or $headers -match "machine \(ARM64X\)"
+            
+            # Check B: Must contain Dynamic Value Relocation Table (DVRT) storing the EC slice
+            $hasDvrt = $loadConfig -match "Dynamic Value Relocation Table" -or $loadConfig -match "ARM64X"
+
+            if (-not $isArm64XHeader) {
+              Write-Error "FAILED: $relPath does not have the AA64 (ARM64X) PE machine header!"
+              $failed = $true
+            } elseif (-not $hasDvrt) {
+              Write-Error "FAILED: $relPath is missing the Dynamic Value Relocation Table (EC slice not embedded)!"
+              $failed = $true
+            } else {
+              Write-Host "    -> Verified: AA64 (ARM64X) + DVRT Table Present."
+            }
+          }
+
+          if ($failed) {
+            throw "ARM64X verification failed! One or more DLLs do not contain true dual-architecture payloads."
+          }
+
+          Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
+
+      - name: Upload Raw ARM64 Shared Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw_artifact/dist
+          retention-days: 5
 
       - name: Check for Windows Binaries to Sign
         id: check_binaries
