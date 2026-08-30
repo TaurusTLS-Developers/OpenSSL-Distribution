@@ -823,19 +823,18 @@ jobs:
           # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
           # -------------------------------------------------------------
           Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
+          
+          # Resolve DEF files dynamically
           $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
           $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
-          if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
-          if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
+          # Link libcrypto-3-arm64.dll (Adds /DEFARM64NATIVE to generate native ARM64 import thunks)
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
 
-          # Link libcrypto-3-arm64.dll
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
-
-          # Link libssl-3-arm64.dll (includes static crypto libs to resolve internal symbols)
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
+          # Link libssl-3-arm64.dll
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
 
           Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
           Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
@@ -876,16 +875,21 @@ jobs:
               $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
               [IO.File]::WriteAllText($moduleDef, $defContent)
 
-              # 3. Collect intermediate object files for this module
-              $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-              $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-
-              # If not named with moduleName, collect all subsystem objects
-              if ($objsArm64.Count -eq 0) {
-                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-              }
-              if ($objsArm64ec.Count -eq 0) {
+              # 3. Collect intermediate object files:
+              # For providers: Include all provider implementation & common context objects
+              # For engines: Include the engine's specific object files
+              if ($SubDir -eq "providers") {
+                $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
                 $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+              } else {
+                $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                if ($objsArm64.Count -eq 0) {
+                  $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                }
+                if ($objsArm64ec.Count -eq 0) {
+                  $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                }
               }
 
               if ($objsArm64.Count -eq 0 -or $objsArm64ec.Count -eq 0) {
@@ -894,7 +898,7 @@ jobs:
 
               $allObjs = $objsArm64 + $objsArm64ec
 
-              # 4. Write Response File (.rsp) — Link against import libcrypto.lib ONLY (NO static libcrypto)
+              # 4. Write Response File (.rsp) with /DEF and /DEFARM64NATIVE
               $moduleRsp = "$wsDir\link_$moduleName.rsp"
               $rspLines = @(
                 "/NOLOGO",
@@ -902,6 +906,7 @@ jobs:
                 "/MACHINE:ARM64X",
                 "/OUT:`"$outDir\$dllName`"",
                 "/DEF:`"$moduleDef`"",
+                "/DEFARM64NATIVE:`"$moduleDef`"",
                 "`"$distShared\lib\import\libcrypto.lib`"",
                 "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
                 "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
@@ -909,7 +914,7 @@ jobs:
 
               [IO.File]::WriteAllLines($moduleRsp, $rspLines)
 
-              # 5. Link the True ARM64X Module DLL (Strict: Throw on ANY failure!)
+              # 5. Link the True ARM64X Module DLL
               cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
               if ($LASTEXITCODE -ne 0) {
                 throw "FATAL: link.exe failed to create true ARM64X module $SubDir\$dllName with exit code $LASTEXITCODE!"
