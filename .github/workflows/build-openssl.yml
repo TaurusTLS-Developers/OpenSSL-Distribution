@@ -990,13 +990,6 @@ jobs:
 
           Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
 
-      - name: Upload Raw ARM64 Shared Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: raw-Windows-arm64-shared-${{ github.run_id }}
-          path: raw_artifact/dist
-          retention-days: 5
-
       - name: Check for Windows Binaries to Sign
         id: check_binaries
         shell: pwsh
