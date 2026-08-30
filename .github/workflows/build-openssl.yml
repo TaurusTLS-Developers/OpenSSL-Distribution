@@ -775,7 +775,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $wsDir = $env:GITHUB_WORKSPACE
-          $dist  = "$wsDir\raw_artifact\dist"
+          $distShared = "$wsDir\raw_shared\dist"
+          $distStatic = "$wsDir\raw_static\dist"
           
           # Locate MSVC Tools
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -784,9 +785,9 @@ jobs:
           
           # Initialize output directory structure
           New-Item -ItemType Directory -Force -Path `
-            "$dist\lib\static\arm64", "$dist\lib\static\arm64ec", `
-            "$dist\lib\import\arm64", "$dist\lib\import\arm64ec", `
-            "$dist\engines", "$dist\providers" | Out-Null
+            "$distStatic\lib\static\arm64", "$distStatic\lib\static\arm64ec", `
+            "$distShared\lib\import\arm64", "$distShared\lib\import\arm64ec", `
+            "$distShared\engines", "$distShared\providers" | Out-Null
 
           # Resolve Slice Directories
           $arm64Shared   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
@@ -798,17 +799,15 @@ jobs:
           # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
           # -------------------------------------------------------------
           Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
-          $cmd = @"
-          call "$vcVars" amd64_arm64
-          lib.exe /NOLOGO /MACHINE:ARM64X /OUT:"$dist\lib\static\libcrypto.lib" "$arm64Static\lib\static\libcrypto.lib" "$arm64ecStatic\lib\static\libcrypto.lib"
-          lib.exe /NOLOGO /MACHINE:ARM64X /OUT:"$dist\lib\static\libssl.lib" "$arm64Static\lib\static\libssl.lib" "$arm64ecStatic\lib\static\libssl.lib"
-          "@
-          $cmd | cmd.exe
-          if ($LASTEXITCODE -ne 0) { throw "Static library merge failed" }
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
+          if ($LASTEXITCODE -ne 0) { throw "Static library libcrypto merge failed" }
+
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
+          if ($LASTEXITCODE -ne 0) { throw "Static library libssl merge failed" }
 
           # Copy pure architecture static slices
-          Copy-Item "$arm64Static\lib\static\*.lib" "$dist\lib\static\arm64\" -Force
-          Copy-Item "$arm64ecStatic\lib\static\*.lib" "$dist\lib\static\arm64ec\" -Force
+          Copy-Item "$arm64Static\lib\static\*.lib" "$distStatic\lib\static\arm64\" -Force
+          Copy-Item "$arm64ecStatic\lib\static\*.lib" "$distStatic\lib\static\arm64ec\" -Force
 
           # -------------------------------------------------------------
           # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
@@ -819,17 +818,15 @@ jobs:
           $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
           $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
-          $cmd = @"
-          call "$vcVars" amd64_arm64
-          link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$dist\libcrypto-3-arm64.dll" /IMPLIB:"$dist\lib\import\libcrypto.lib" /DEF:"$cryptoDef" "$arm64Static\lib\static\libcrypto.lib" "$arm64ecStatic\lib\static\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
-          link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$dist\libssl-3-arm64.dll" /IMPLIB:"$dist\lib\import\libssl.lib" /DEF:"$sslDef" "$arm64Static\lib\static\libssl.lib" "$arm64ecStatic\lib\static\libssl.lib" "$dist\lib\import\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
-          "@
-          $cmd | cmd.exe
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X DLL linking failed" }
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
+
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
 
           # Copy pure architecture import slices
-          Copy-Item "$arm64Shared\lib\import\*.lib" "$dist\lib\import\arm64\" -Force
-          Copy-Item "$arm64ecShared\lib\import\*.lib" "$dist\lib\import\arm64ec\" -Force
+          Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
+          Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
 
           # -------------------------------------------------------------
           # 3. DYNAMIC DISCOVERY & LINKING OF PROVIDERS AND ENGINES
@@ -837,10 +834,10 @@ jobs:
           Write-Host "`n=== 3. Auto-Discovering and Linking Dynamic Modules ==="
 
           function Fuse-Dynamic-Modules {
-            param ([string]$SubDir) # 'providers' or 'engines'
+            param ([string]$SubDir)
             $srcDirArm64   = "$arm64Shared\$SubDir"
             $srcDirArm64ec = "$arm64ecShared\$SubDir"
-            $outDir        = "$dist\$SubDir"
+            $outDir        = "$distShared\$SubDir"
 
             if (-not (Test-Path $srcDirArm64ec)) { return }
 
@@ -865,24 +862,19 @@ jobs:
               $objsArm64   = Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
               $objsArm64ec = Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 
-              # 4. Link the true ARM64X module DLL
+              # 4. Link the true ARM64X module DLL directly without here-strings
               $objArgs = ($objsArm64 + $objsArm64ec) -join '" "'
               if ($objArgs) { $objArgs = "`"$objArgs`"" }
 
-              $cmd = @"
-              call "$vcVars" amd64_arm64
-              link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:"$outDir\$dllName" /DEF:"$moduleDef" $objArgs "$dist\lib\import\libcrypto.lib" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
-              "@
-              $cmd | cmd.exe
+              cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$outDir\$dllName`" /DEF:`"$moduleDef`" $objArgs `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+              
               if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Direct object linking failed for $dllName. Creating ARM64X forwarder wrapper..."
-                # Robust fallback for complex internal provider objects
+                Write-Warning "Direct object linking failed for $dllName. Using fallback wrapper..."
                 Copy-Item "$srcDirArm64\$dllName" "$outDir\$dllName" -Force
               }
             }
           }
 
-          # Process all dynamic modules dynamically
           Fuse-Dynamic-Modules -SubDir "providers"
           Fuse-Dynamic-Modules -SubDir "engines"
 
@@ -890,7 +882,7 @@ jobs:
           # 4. STAGE PURE NATIVE ARM64 openssl.exe
           # -------------------------------------------------------------
           Write-Host "`n=== 4. Staging Native ARM64 openssl.exe ==="
-          Copy-Item "$arm64Shared\openssl.exe" "$dist\openssl.exe" -Force
+          Copy-Item "$arm64Shared\openssl.exe" "$distShared\openssl.exe" -Force
 
       # -----------------------------------------------------------------
       # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
