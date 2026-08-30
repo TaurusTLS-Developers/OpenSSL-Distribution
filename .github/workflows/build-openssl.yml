@@ -818,10 +818,12 @@ jobs:
           $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
           $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
+          # Link libcrypto-3-arm64.dll
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
           if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
 
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          # Link libssl-3-arm64.dll (Includes static libcrypto archives to resolve internal WPACKET_* symbols)
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
           if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
 
           # Copy pure architecture import slices
@@ -862,7 +864,7 @@ jobs:
               $objsArm64   = Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
               $objsArm64ec = Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 
-              # 4. Link the true ARM64X module DLL directly without here-strings
+              # 4. Link the true ARM64X module DLL
               $objArgs = ($objsArm64 + $objsArm64ec) -join '" "'
               if ($objArgs) { $objArgs = "`"$objArgs`"" }
 
@@ -1356,8 +1358,7 @@ jobs:
 
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
-    needs:  [validate-version, build-common-assets, compile-binaries]
-    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     strategy:
       fail-fast: false
       matrix:
