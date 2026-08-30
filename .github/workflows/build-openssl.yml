@@ -820,18 +820,19 @@ jobs:
           # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
           # -------------------------------------------------------------
           Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
-          
-          # Resolve DEF files dynamically
           $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
           $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
-          # Link libcrypto-3-arm64.dll (Adds /DEFARM64NATIVE to generate native ARM64 import thunks)
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
+          if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
+          if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
 
-          # Link libssl-3-arm64.dll
+          # Link libcrypto-3-arm64.dll (Adds /DEFARM64NATIVE to generate dual-mode import thunks)
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
+
+          # Link libssl-3-arm64.dll (Resolves internal crypto symbols via static crypto libs + import lib)
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
 
           Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
           Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
@@ -872,25 +873,42 @@ jobs:
               $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
               [IO.File]::WriteAllText($moduleDef, $defContent)
 
-              # 3. Collect intermediate object files:
-              # For providers: Include all provider implementation & common context objects
-              # For engines: Include the engine's specific object files
+              # 3. Selective Object Resolution based on Module Classification
               if ($SubDir -eq "providers") {
-                $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                # For Providers (e.g. legacy.dll):
+                # Include driver objects (*legacy*.obj), implementation objects (liblegacy-lib-*.obj),
+                # and common provider context helpers (providers/common/*.obj).
+                # Explicitly excludes libdefault, libcrypto, and other provider objects.
+                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\providers" -Recurse -File |
+                  Where-Object { 
+                    $_.Name -match "^(.*-dso-)?$moduleName" -or 
+                    $_.Name -match "^lib$moduleName-lib-" -or 
+                    $_.DirectoryName -match '\\common$'
+                  } | Select-Object -ExpandProperty FullName)
+
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\providers" -Recurse -File |
+                  Where-Object { 
+                    $_.Name -match "^(.*-dso-)?$moduleName" -or 
+                    $_.Name -match "^lib$moduleName-lib-" -or 
+                    $_.DirectoryName -match '\\common$'
+                  } | Select-Object -ExpandProperty FullName)
               } else {
-                $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-                if ($objsArm64.Count -eq 0) {
-                  $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-                }
-                if ($objsArm64ec.Count -eq 0) {
-                  $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-                }
+                # For Engines (e.g. capi.dll, padlock.dll, loader_attic.dll):
+                # Only include objects specifically compiled for this engine
+                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\engines" -Recurse -File |
+                  Where-Object { $_.Name -match "(^|_)e?$moduleName" } | Select-Object -ExpandProperty FullName)
+
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\engines" -Recurse -File |
+                  Where-Object { $_.Name -match "(^|_)e?$moduleName" } | Select-Object -ExpandProperty FullName)
               }
 
-              if ($objsArm64.Count -eq 0 -or $objsArm64ec.Count -eq 0) {
-                throw "FATAL: Missing intermediate object files for $SubDir\$dllName! Found ARM64: $($objsArm64.Count), ARM64EC: $($objsArm64ec.Count)"
+              Write-Host "     [+] Resolved objects: Native ARM64 = $($objsArm64.Count), ARM64EC = $($objsArm64ec.Count)"
+
+              if ($objsArm64.Count -eq 0) {
+                throw "FATAL: No Native ARM64 object files found to build $SubDir\$dllName!"
+              }
+              if ($objsArm64ec.Count -eq 0) {
+                throw "FATAL: No ARM64EC object files found to build $SubDir\$dllName!"
               }
 
               $allObjs = $objsArm64 + $objsArm64ec
@@ -911,7 +929,7 @@ jobs:
 
               [IO.File]::WriteAllLines($moduleRsp, $rspLines)
 
-              # 5. Link the True ARM64X Module DLL
+              # 5. Link the True ARM64X Module DLL (Strict: Throw on ANY failure!)
               cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
               if ($LASTEXITCODE -ne 0) {
                 throw "FATAL: link.exe failed to create true ARM64X module $SubDir\$dllName with exit code $LASTEXITCODE!"
@@ -919,7 +937,7 @@ jobs:
               Write-Host "     [+] Successfully linked TRUE ARM64X module: $dllName"
             }
           }
-          
+
           Fuse-Dynamic-Modules -SubDir "providers"
           Fuse-Dynamic-Modules -SubDir "engines"
 
