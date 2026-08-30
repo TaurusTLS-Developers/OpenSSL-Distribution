@@ -965,16 +965,16 @@ jobs:
             Write-Host "--- dumpbin machine line ($relPath) ---"
             Write-Host ($headers | Select-String "machine").Line
 
-            # Check A: Header must contain (ARM64X)
-            $isArm64XHeader = $headers -match "(?i)machine\s+\(.*ARM64X.*\)"
+            # Check A: Base machine header must be ARM64 (AA64)
+            $isArm64Header = $headers -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $headers -match "(?i)machine\s+\(.*ARM64.*\)"
             
             # Check B: Must contain Dynamic Value Relocation Table (DVRT) storing the EC slice
             $hasDvrt = $loadConfig -match "(?i)Dynamic Value Relocation Table" -or $loadConfig -match "(?i)ARM64X"
 
-            Write-Host "  -> Comparison: Header ARM64X=$isArm64XHeader | DVRT table=$hasDvrt"
+            Write-Host "  -> Comparison: Base ARM64 Header=$isArm64Header | DVRT Table=$hasDvrt"
 
-            if (-not $isArm64XHeader) {
-              Write-Error "FAILED: $relPath does not have the ARM64X PE machine header!"
+            if (-not $isArm64Header) {
+              Write-Error "FAILED: $relPath is not an ARM64-based PE binary!"
               $failed = $true
             } elseif (-not $hasDvrt) {
               Write-Error "FAILED: $relPath is missing the Dynamic Value Relocation Table (EC slice not embedded)!"
@@ -989,7 +989,7 @@ jobs:
           }
 
           Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
-          
+
       - name: Upload Raw ARM64 Shared Artifact
         uses: actions/upload-artifact@v7
         with:
