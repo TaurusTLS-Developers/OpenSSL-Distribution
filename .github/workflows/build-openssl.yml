@@ -230,7 +230,6 @@ jobs:
         platform:
           - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
           - { label: Windows, os: windows-latest, arch: x86, target: VC-WIN32, vcvars: x86 }
-          - { label: Windows, os: windows-latest, arch: arm64ec, target: VC-ARM64EC, vcvars: amd64_arm64 }
           - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
           - { label: Linux, os: ubuntu-latest, arch: arm64, target: linux-aarch64 }
           - { label: macOS, os: macos-14, arch: x64, target: darwin64-x86_64-cc, minos: "10.14" }
@@ -241,8 +240,8 @@ jobs:
           - { label: iOS, os: macos-14, arch: sim-arm64, target: iossimulator-xcrun, minos: "11.0" }
         exclude:
           - linkage: shared
-            platform: { label: iOS } # iOS is static only
-            
+            platform: { label: iOS }
+          
     runs-on: ${{ matrix.platform.os }}
     permissions:
       id-token: write
@@ -615,12 +614,292 @@ jobs:
           path: raw_artifact/dist
           retention-days: 1
           
+# =========================================================================
+  # 2b. COMPILE ARM64X SLICES IN PARALLEL (Native ARM64 + ARM64EC)
+  # =========================================================================
+  compile-windows-arm64x-slices:
+    name: Compile Windows ARM64X Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        linkage: [shared, static]
+        slice:
+          - { label: native-arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
+          - { label: arm64ec,      target: VC-ARM64EC,   vcvars: amd64_arm64 }
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.validate-version.outputs.target_repo }}
+          ref: ${{ needs.validate-version.outputs.sha }}
+
+      - name: Prepare HybridCRT Targets
+        shell: bash
+        run: |
+          cat << 'EOF' > Configurations/99-arm64x-prep.conf
+          my %targets = (
+              "VC-WIN64-ARM-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "tests", "makedepend", "__DOCS__" ],
+                  multilib     => "-arm64",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-WIN64-ARM-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "tests", "makedepend", "__DOCS__" ],
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-ARM64EC-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "asm", "tests", "makedepend", "__DOCS__" ],
+                  multilib     => "-arm64",
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-ARM64EC-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "asm", "tests", "makedepend", "__DOCS__" ],
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+          );
+          EOF
+
+          if grep -q "no-docs" INSTALL.md; then
+            sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-arm64x-prep.conf
+          else
+            sed -i 's/"__DOCS__"//g' Configurations/99-arm64x-prep.conf
+          fi
+
+      - name: Compile and Stage Slice Binaries
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.slice.vcvars }}
+          
+          set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
+          set "STAGED=%GITHUB_WORKSPACE%\slice_out"
+          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers"
+
+          set "LINK_UPPER=${{ matrix.linkage }}"
+          if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
+
+          perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
+          nmake && nmake install_sw
+
+          if "${{ matrix.linkage }}"=="shared" (
+              if exist "%INSTALL_TEMP%\bin\openssl.exe" copy "%INSTALL_TEMP%\bin\openssl.exe" "%STAGED%\"
+              copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
+              if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
+              if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
+          ) else (
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
+          )
+
+      - name: Upload Slice Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: slice-${{ matrix.slice.label }}-${{ matrix.linkage }}-${{ github.run_id }}
+          path: slice_out/
+          retention-days: 1
+
+  # =========================================================================
+  # 2c. MERGE, SIGN & VERIFY ARM64X BINARIES
+  # =========================================================================
+  merge-windows-arm64x:
+    name: Merge & Sign Windows ARM64X
+    needs: [validate-version, compile-windows-arm64x-slices]
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download Native ARM64 Shared Slice
+        uses: actions/download-artifact@v8
+        with:
+          name: slice-native-arm64-shared-${{ github.run_id }}
+          path: slice-arm64-shared
+
+      - name: Download Native ARM64 Static Slice
+        uses: actions/download-artifact@v8
+        with:
+          name: slice-native-arm64-static-${{ github.run_id }}
+          path: slice-arm64-static
+
+      - name: Download ARM64EC Shared Slice
+        uses: actions/download-artifact@v8
+        with:
+          name: slice-arm64ec-shared-${{ github.run_id }}
+          path: slice-arm64ec-shared
+
+      - name: Download ARM64EC Static Slice
+        uses: actions/download-artifact@v8
+        with:
+          name: slice-arm64ec-static-${{ github.run_id }}
+          path: slice-arm64ec-static
+
+      - name: Link and Create ARM64X Binaries
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          
+          set "DIST_SHARED=%GITHUB_WORKSPACE%\raw_shared\dist"
+          set "DIST_STATIC=%GITHUB_WORKSPACE%\raw_static\dist"
+          
+          :: Create directories for Unified, pure ARM64, and pure ARM64EC libraries
+          mkdir "%DIST_SHARED%\lib\import\arm64" "%DIST_SHARED%\lib\import\arm64ec" "%DIST_SHARED%\engines" "%DIST_SHARED%\providers"
+          mkdir "%DIST_STATIC%\lib\static\arm64" "%DIST_STATIC%\lib\static\arm64ec"
+
+          echo ===================================================
+          echo 1. CREATE UNIFIED AND SLICE STATIC LIBRARIES
+          echo ===================================================
+          :: Unified ARM64X Static Libraries (Combined)
+          lib.exe /NOLOGO /MACHINE:ARM64X ^
+            /OUT:"%DIST_STATIC%\lib\static\libcrypto.lib" ^
+            "slice-arm64-static\lib\static\libcrypto.lib" ^
+            "slice-arm64ec-static\lib\static\libcrypto.lib"
+
+          lib.exe /NOLOGO /MACHINE:ARM64X ^
+            /OUT:"%DIST_STATIC%\lib\static\libssl.lib" ^
+            "slice-arm64-static\lib\static\libssl.lib" ^
+            "slice-arm64ec-static\lib\static\libssl.lib"
+
+          :: Dedicated Pure Static Slices
+          copy /Y "slice-arm64-static\lib\static\*.lib" "%DIST_STATIC%\lib\static\arm64\"
+          copy /Y "slice-arm64ec-static\lib\static\*.lib" "%DIST_STATIC%\lib\static\arm64ec\"
+
+          echo ===================================================
+          echo 2. COPY SHARED RUNTIME, ENGINES AND IMPORT LIBRARIES
+          echo ===================================================
+          xcopy /E /I /Y "slice-arm64ec-shared\engines\*" "%DIST_SHARED%\engines\" 2>nul || ver >nul
+          xcopy /E /I /Y "slice-arm64ec-shared\providers\*" "%DIST_SHARED%\providers\" 2>nul || ver >nul
+
+          copy /Y "slice-arm64ec-shared\*.dll" "%DIST_SHARED%\"
+          copy /Y "slice-arm64ec-shared\openssl.exe" "%DIST_SHARED%\"
+
+          :: Unified ARM64X Import Libraries (default in lib/import/)
+          copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\"
+
+          :: Dedicated Pure Import Slices
+          copy /Y "slice-arm64-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\arm64\"
+          copy /Y "slice-arm64ec-shared\lib\import\*.lib" "%DIST_SHARED%\lib\import\arm64ec\"
+
+          echo ===================================================
+          echo 3. INSPECT PE HEADERS
+          echo ===================================================
+          dumpbin.exe /headers "%DIST_SHARED%\libcrypto-3-arm64.dll" | findstr /C:"machine"
+          dumpbin.exe /headers "%DIST_STATIC%\lib\static\libcrypto.lib" | findstr /C:"machine"
+
+      - name: Check for Windows Binaries to Sign
+        id: check_binaries
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
+          if ($files.Count -gt 0) {
+            Write-Host "Found $($files.Count) binary file(s) to sign."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=true"
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=false"
+          }
+
+      - name: Azure Login
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        uses: azure/login@v3
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign Windows ARM64X Binaries
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\raw_shared\dist
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Windows ARM64X Binaries
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
+          $failed = $false
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status) | Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Error "Invalid signature: $($file.Name)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Upload Raw ARM64 Shared Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw_shared/dist
+          retention-days: 1
+
+      - name: Upload Raw ARM64 Static Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: raw-Windows-arm64-static-${{ github.run_id }}
+          path: raw_static/dist
+          retention-days: 1
+
   # =========================================================================
   # 3a. BUILD WINDOWS MULTI-ARCH INSTALLER — Release Builds Only
   # =========================================================================
   InnoSetup-windows-installer:
     name: Inno Setup Windows Multi-Arch Installer
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     runs-on: windows-latest
     permissions:
@@ -656,11 +935,11 @@ jobs:
           name: raw-Windows-x86-shared-${{ github.run_id }}
           path: raw-shared-x86
 
-      - name: Download ARM64EC Shared Artifact
+      - name: Download ARM64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
-          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
-          path: raw-shared-arm64ec
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw-shared-arm64
 
       - name: Download Common Assets
         uses: actions/download-artifact@v8
@@ -674,7 +953,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $redist = "$env:GITHUB_WORKSPACE\redist"
 
-          foreach ($arch in @('x64', 'x86', 'arm64ec')) {
+          foreach ($arch in @('x64', 'x86', 'arm64')) {
             $archDir = "$redist\$arch"
             New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
             $src = "$env:GITHUB_WORKSPACE\raw-shared-$arch"
@@ -797,15 +1076,15 @@ jobs:
   # =========================================================================
   msix-windows-installers:
     name: Windows MSIX Framework (${{ matrix.arch }})
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64,     msix_arch: x64 }
-          - { arch: x86,     msix_arch: x86 }
-          - { arch: arm64ec, msix_arch: arm64 }
+          - { arch: x64,   msix_arch: x64 }
+          - { arch: x86,   msix_arch: x86 }
+          - { arch: arm64, msix_arch: arm64 }
     runs-on: windows-latest
     permissions:
       id-token: write
@@ -964,7 +1243,7 @@ jobs:
           # Windows packaging moved to ubuntu-latest for speed and native 'zip' support
           - { label: Windows, arch: x64, runner: ubuntu-latest }
           - { label: Windows, arch: x86, runner: ubuntu-latest }
-          - { label: Windows, arch: arm64ec, runner: ubuntu-latest }
+          - { label: Windows, arch: arm64, runner: ubuntu-latest }
           
           # Linux & Android
           - { label: Linux, arch: x64, runner: ubuntu-latest }
