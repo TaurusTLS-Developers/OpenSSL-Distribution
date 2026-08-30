@@ -718,7 +718,7 @@ jobs:
           
           set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
           set "STAGED=%GITHUB_WORKSPACE%\slice_out"
-          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def" "%STAGED%\build_objs"
+          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def" "%STAGED%\build_objs\engines" "%STAGED%\build_objs\providers"
 
           set "LINK_UPPER=${{ matrix.linkage }}"
           if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
@@ -734,16 +734,18 @@ jobs:
               if exist "%INSTALL_TEMP%\lib\engines-4" copy "%INSTALL_TEMP%\lib\engines-4\*.dll" "%STAGED%\engines\"
               if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
               
-              :: Dynamically preserve all module definitions and intermediate object files
+              :: Preserve module definitions
               if exist "*.def" copy "*.def" "%STAGED%\def\"
               if exist "util\*.def" copy "util\*.def" "%STAGED%\def\"
               if exist "providers\*.def" copy "providers\*.def" "%STAGED%\def\"
               if exist "engines\*.def" copy "engines\*.def" "%STAGED%\def\"
               
-              :: Preserve all build objects for engines, providers, and apps
+              :: Preserve all objects and archives from engines and providers build trees
               xcopy /S /Y /I "engines\*.obj" "%STAGED%\build_objs\engines\" 2>nul || ver >nul
+              xcopy /S /Y /I "engines\*.res" "%STAGED%\build_objs\engines\" 2>nul || ver >nul
               xcopy /S /Y /I "providers\*.obj" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
-              xcopy /S /Y /I "apps\*.obj" "%STAGED%\build_objs\apps\" 2>nul || ver >nul
+              xcopy /S /Y /I "providers\*.res" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
+              xcopy /S /Y /I "providers\*.lib" "%STAGED%\build_objs\providers\" 2>nul || ver >nul
           ) else (
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
           )
@@ -781,8 +783,13 @@ jobs:
           # Locate MSVC Tools
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsPath  = & $vswhere -latest -property installationPath
-          $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          if (-not (Test-Path $vsPath)) { throw "FATAL: Visual Studio installation path could not be resolved!" }
           
+          $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
+          if (-not (Test-Path $dumpbin)) { throw "FATAL: Hostx64 dumpbin.exe not found!" }
+
           # Initialize output directory structure
           New-Item -ItemType Directory -Force -Path `
             "$distStatic\lib\static\arm64", "$distStatic\lib\static\arm64ec", `
@@ -795,17 +802,20 @@ jobs:
           $arm64ecShared = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
           $arm64ecStatic = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
 
+          if (-not $arm64Shared -or -not $arm64Static -or -not $arm64ecShared -or -not $arm64ecStatic) {
+            throw "FATAL: One or more slice directories were not found in $wsDir\slices!"
+          }
+
           # -------------------------------------------------------------
           # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
           # -------------------------------------------------------------
           Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
-          if ($LASTEXITCODE -ne 0) { throw "Static library libcrypto merge failed" }
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libcrypto merge failed with exit code $LASTEXITCODE" }
 
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
-          if ($LASTEXITCODE -ne 0) { throw "Static library libssl merge failed" }
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libssl merge failed with exit code $LASTEXITCODE" }
 
-          # Copy pure architecture static slices
           Copy-Item "$arm64Static\lib\static\*.lib" "$distStatic\lib\static\arm64\" -Force
           Copy-Item "$arm64ecStatic\lib\static\*.lib" "$distStatic\lib\static\arm64ec\" -Force
 
@@ -813,27 +823,27 @@ jobs:
           # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
           # -------------------------------------------------------------
           Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
-          
-          # Resolve DEF files dynamically
           $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
           $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
 
+          if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
+          if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
+
           # Link libcrypto-3-arm64.dll
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libcrypto DLL linking failed" }
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
 
-          # Link libssl-3-arm64.dll
+          # Link libssl-3-arm64.dll (includes static crypto libs to resolve internal symbols)
           cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "Core ARM64X libssl DLL linking failed" }
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
 
-          # Copy pure architecture import slices
           Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
           Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
 
           # -------------------------------------------------------------
-          # 3. DYNAMIC DISCOVERY & LINKING OF PROVIDERS AND ENGINES
+          # 3. DYNAMIC DISCOVERY & STRICT LINKING OF PROVIDERS AND ENGINES
           # -------------------------------------------------------------
-          Write-Host "`n=== 3. Auto-Discovering and Linking Dynamic Modules ==="
+          Write-Host "`n=== 3. Auto-Discovering and Strictly Linking Dynamic Modules ==="
 
           function Fuse-Dynamic-Modules {
             param ([string]$SubDir)
@@ -844,16 +854,21 @@ jobs:
             if (-not (Test-Path $srcDirArm64ec)) { return }
 
             $dlls = Get-ChildItem $srcDirArm64ec -Filter "*.dll"
+            if ($dlls.Count -eq 0) { return }
+
             foreach ($dll in $dlls) {
               $moduleName = $dll.BaseName
               $dllName    = $dll.Name
-              Write-Host "  -> Fusing ARM64X module: $SubDir\$dllName"
+              Write-Host "  -> Strictly linking ARM64X module: $SubDir\$dllName"
 
-              # 1. Extract module exports using dumpbin
-              $dumpbinTool = (Get-Item "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1).FullName
-              $exportsDump = & $dumpbinTool /exports $dll.FullName | Out-String
+              # 1. Dynamically extract module exports using dumpbin
+              $exportsDump = & $dumpbin /exports $dll.FullName | Out-String
               $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object {
                 $matches[1]
+              }
+
+              if ($exportLines.Count -eq 0) {
+                throw "FATAL: No exported functions found in $dllName via dumpbin!"
               }
 
               # 2. Write dynamic .def file
@@ -861,42 +876,50 @@ jobs:
               $defContent = "LIBRARY $moduleName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
               [IO.File]::WriteAllText($moduleDef, $defContent)
 
-              # 3. Collect intermediate object files with @(...) array casting
+              # 3. Collect intermediate object files for this module
               $objsArm64   = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
               $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*$moduleName*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-              $allObjs     = $objsArm64 + $objsArm64ec
 
-              $linkedSuccess = $false
-
-              if ($allObjs.Count -gt 0) {
-                # 4. Use a Response File (.rsp) to avoid command-line length limits
-                $moduleRsp = "$wsDir\link_$moduleName.rsp"
-                $rspLines = @(
-                  "/NOLOGO",
-                  "/DLL",
-                  "/MACHINE:ARM64X",
-                  "/OUT:`"$outDir\$dllName`"",
-                  "/DEF:`"$moduleDef`"",
-                  "`"$distShared\lib\import\libcrypto.lib`"",
-                  "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
-                  "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
-                ) + ($allObjs | ForEach-Object { "`"$_`"" })
-
-                [IO.File]::WriteAllLines($moduleRsp, $rspLines)
-
-                cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
-                if ($LASTEXITCODE -eq 0) {
-                  $linkedSuccess = $true
-                  Write-Host "     [+] Successfully linked ARM64X module: $dllName"
-                }
+              # If not named with moduleName, collect all subsystem objects
+              if ($objsArm64.Count -eq 0) {
+                $objsArm64 = @(Get-ChildItem "$arm64Shared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+              }
+              if ($objsArm64ec.Count -eq 0) {
+                $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
               }
 
-              if (-not $linkedSuccess) {
-                Write-Warning "Direct object linking skipped/failed for $dllName. Using fallback..."
-                Copy-Item "$srcDirArm64\$dllName" "$outDir\$dllName" -Force
-                # Reset exit code so fallback does not fail the workflow step
-                $global:LASTEXITCODE = 0
+              # Enforce: Both slices MUST exist
+              if ($objsArm64.Count -eq 0) {
+                throw "FATAL: No Native ARM64 object files found to build $SubDir\$dllName!"
               }
+              if ($objsArm64ec.Count -eq 0) {
+                throw "FATAL: No ARM64EC object files found to build $SubDir\$dllName!"
+              }
+
+              $allObjs = $objsArm64 + $objsArm64ec
+
+              # 4. Write Response File (.rsp)
+              $moduleRsp = "$wsDir\link_$moduleName.rsp"
+              $rspLines = @(
+                "/NOLOGO",
+                "/DLL",
+                "/MACHINE:ARM64X",
+                "/OUT:`"$outDir\$dllName`"",
+                "/DEF:`"$moduleDef`"",
+                "`"$distShared\lib\import\libcrypto.lib`"",
+                "`"$distStatic\lib\static\libcrypto.lib`"",
+                "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
+                "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
+              ) + ($allObjs | ForEach-Object { "`"$_`"" })
+
+              [IO.File]::WriteAllLines($moduleRsp, $rspLines)
+
+              # 5. Link the True ARM64X Module DLL (Strict: Throw on ANY failure!)
+              cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$moduleRsp`""
+              if ($LASTEXITCODE -ne 0) {
+                throw "FATAL: link.exe failed to create true ARM64X module $SubDir\$dllName with exit code $LASTEXITCODE!"
+              }
+              Write-Host "     [+] Successfully linked TRUE ARM64X module: $dllName"
             }
           }
 
@@ -907,8 +930,28 @@ jobs:
           # 4. STAGE PURE NATIVE ARM64 openssl.exe
           # -------------------------------------------------------------
           Write-Host "`n=== 4. Staging Native ARM64 openssl.exe ==="
+          if (-not (Test-Path "$arm64Shared\openssl.exe")) {
+            throw "FATAL: Native ARM64 openssl.exe not found in $arm64Shared!"
+          }
           Copy-Item "$arm64Shared\openssl.exe" "$distShared\openssl.exe" -Force
-          $global:LASTEXITCODE = 0
+
+          # -------------------------------------------------------------
+          # 5. STRICT CLEANUP (Keep ONLY DLLs in modules, ONLY LIBs in import)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 5. Cleaning Up Leftover Build Artifacts ==="
+          Get-ChildItem "$distShared\engines", "$distShared\providers" -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne '.dll' } |
+            ForEach-Object {
+              Write-Host "  [-] Removing intermediate build file: $($_.FullName)"
+              Remove-Item $_.FullName -Force
+            }
+
+          Get-ChildItem "$distShared\lib\import" -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne '.lib' } |
+            ForEach-Object {
+              Write-Host "  [-] Removing intermediate import file: $($_.FullName)"
+              Remove-Item $_.FullName -Force
+            }
 
       # -----------------------------------------------------------------
       # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
