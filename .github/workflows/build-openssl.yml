@@ -760,7 +760,7 @@ jobs:
   # =========================================================================
   merge-windows-arm64x:
     name: Merge & Link ARM64X Binaries
-    needs: [validate-version, compile-slices]
+    needs: [validate-version, compile-windows-arm64x-slices]
     runs-on: windows-latest
     steps:
       - name: Download Slices
