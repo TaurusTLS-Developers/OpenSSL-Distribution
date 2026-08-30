@@ -850,7 +850,9 @@ jobs:
               Write-Host "  -> Fusing ARM64X module: $SubDir\$dllName"
 
               # 1. Dynamically extract module exports using dumpbin
-              $exportsDump = & "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" /exports $dll.FullName | Out-String
+              $dumpbinTool = (Get-Item "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1).FullName
+              $exportsDump = & $dumpbinTool /exports $dll.FullName | Out-String
+
               $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object {
                 $matches[1]
               }
