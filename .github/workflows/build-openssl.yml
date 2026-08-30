@@ -1465,7 +1465,7 @@ jobs:
           retention-days: 5
 
   # =========================================================================
-  # 5. CLEANUP RAW ARTIFACTS
+  # 5. CLEANUP RAW & INTERMEDIATE ARTIFACTS
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
@@ -1479,18 +1479,20 @@ jobs:
     permissions:
       actions: write
     steps:
-      - name: Delete Raw and Common Artifacts
+      - name: Delete Intermediate Artifacts (raw, slice, common-assets)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Fetching artifacts for run ${{ github.run_id }}..."
           
-          # Use gh api to list artifacts specifically for THIS run to avoid conflicts
+          # List all artifacts for THIS run
           ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
           
-          # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
-          # We also verify the name ends with the run_id for triple-redundancy
-          IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | (startswith(\"raw-\") and endswith(\"-${{ github.run_id }}\")) or . == \"openssl-common-assets-${{ github.run_id }}\") | .id")
+          # Filter for IDs of artifacts matching:
+          # - 'raw-*'
+          # - 'slice-*' (ARM64X compilation slices)
+          # - 'openssl-common-assets-*'
+          IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | ((startswith(\"raw-\") or startswith(\"slice-\")) and endswith(\"-${{ github.run_id }}\")) or . == \"openssl-common-assets-${{ github.run_id }}\") | .id")
           
           if [ -z "$IDS" ] || [ "$IDS" == "null" ]; then
             echo "No intermediate artifacts found to delete."
@@ -1498,8 +1500,8 @@ jobs:
           fi
           
           for id in $IDS; do
-            echo "Deleting artifact ID: $id"
-            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true # Continue even if deletion fails
+            echo "Deleting intermediate artifact ID: $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true
           done
           
-          echo "✅ Cleanup complete."
+          echo "✅ Intermediate artifact cleanup complete."
