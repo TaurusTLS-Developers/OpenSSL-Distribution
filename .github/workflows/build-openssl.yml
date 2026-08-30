@@ -888,17 +888,13 @@ jobs:
                 $objsArm64ec = @(Get-ChildItem "$arm64ecShared\build_objs\$SubDir" -Filter "*.obj" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
               }
 
-              # Enforce: Both slices MUST exist
-              if ($objsArm64.Count -eq 0) {
-                throw "FATAL: No Native ARM64 object files found to build $SubDir\$dllName!"
-              }
-              if ($objsArm64ec.Count -eq 0) {
-                throw "FATAL: No ARM64EC object files found to build $SubDir\$dllName!"
+              if ($objsArm64.Count -eq 0 -or $objsArm64ec.Count -eq 0) {
+                throw "FATAL: Missing intermediate object files for $SubDir\$dllName! Found ARM64: $($objsArm64.Count), ARM64EC: $($objsArm64ec.Count)"
               }
 
               $allObjs = $objsArm64 + $objsArm64ec
 
-              # 4. Write Response File (.rsp)
+              # 4. Write Response File (.rsp) — Link against import libcrypto.lib ONLY (NO static libcrypto)
               $moduleRsp = "$wsDir\link_$moduleName.rsp"
               $rspLines = @(
                 "/NOLOGO",
@@ -907,7 +903,6 @@ jobs:
                 "/OUT:`"$outDir\$dllName`"",
                 "/DEF:`"$moduleDef`"",
                 "`"$distShared\lib\import\libcrypto.lib`"",
-                "`"$distStatic\lib\static\libcrypto.lib`"",
                 "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
                 "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
               ) + ($allObjs | ForEach-Object { "`"$_`"" })
@@ -922,7 +917,7 @@ jobs:
               Write-Host "     [+] Successfully linked TRUE ARM64X module: $dllName"
             }
           }
-
+          
           Fuse-Dynamic-Modules -SubDir "providers"
           Fuse-Dynamic-Modules -SubDir "engines"
 
