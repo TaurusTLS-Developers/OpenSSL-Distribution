@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="OpenSSL {{VERSION}} ({{ARCH}})"
+           Manufacturer="{{APP_PUBLISHER}}"
+           Version="{{VERSION_FOUR_PART}}"
+           UpgradeCode="{{UPGRADE_CODE}}"
+           Language="1033"
+           Scope="perMachine">
+
+    <SummaryInformation Description="OpenSSL {{VERSION}} ({{ARCH}}) Installer"
+                        Manufacturer="{{APP_PUBLISHER}}" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Visual Branding -->
+    <WixVariable Id="WixUILicenseRtf" Value="{{ASSETS_DIR}}\LICENSE.rtf" />
+    <Icon Id="ProductIcon" SourceFile="{{ASSETS_DIR}}\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="ARPHELPLINK" Value="{{APP_PUBLISHER_URL}}" />
+
+    <!-- UI: Interactive Feature Selection Tree with License -->
+    <ui:WixUI Id="WixUI_FeatureTree" />
+
+    <!-- Directory Structure -->
+    <StandardDirectory Id="{{PROGRAM_FILES_FOLDER}}">
+      <Directory Id="ManufacturerFolder" Name="{{APP_PUBLISHER}}">
+        <Directory Id="INSTALLFOLDER" Name="OpenSSL-{{VERSION}}">
+          <Directory Id="EnginesFolder" Name="engines" />
+          <Directory Id="ProvidersFolder" Name="providers" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- 32-bit Compatibility Directory (Available on 64-bit systems) -->
+    <?if $(sys.BUILDARCH) = "x64" ?>
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="ManufacturerFolder32" Name="{{APP_PUBLISHER}}">
+        <Directory Id="INSTALLFOLDER32" Name="OpenSSL-{{VERSION}}">
+          <Directory Id="EnginesFolder32" Name="engines" />
+          <Directory Id="ProvidersFolder32" Name="providers" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <?endif?>
+
+    <!-- ================================================================= -->
+    <!-- FEATURES & COMPONENT GROUPS                                       -->
+    <!-- ================================================================= -->
+
+    <!-- 1. Native Runtime Feature -->
+    <Feature Id="NativeRuntime"
+             Title="OpenSSL Native Runtime"
+             Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
+             Level="1"
+             AllowAbsent="no">
+      <Files Include="{{REDIST_DIR}}\{{ARCH}}\*" Directory="INSTALLFOLDER" />
+      <Files Include="{{REDIST_DIR}}\{{ARCH}}\engines\*" Directory="EnginesFolder" />
+      <Files Include="{{REDIST_DIR}}\{{ARCH}}\providers\*" Directory="ProvidersFolder" />
+      <Component Directory="INSTALLFOLDER">
+        <File Source="{{REDIST_DIR}}\LICENSE.txt" />
+        <Environment Id="UpdatePath"
+                     Name="PATH"
+                     Value="[INSTALLFOLDER]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+    </Feature>
+
+    <!-- 2. Optional 32-bit (x86) Compatibility Feature on x64 -->
+    <?if $(sys.BUILDARCH) = "x64" ?>
+    <Feature Id="x86CompatRuntime"
+             Title="32-bit (x86) Compatibility Runtime"
+             Description="Installs 32-bit libraries to Program Files (x86) for 32-bit application compatibility."
+             Level="2"
+             AllowAbsent="yes">
+      <Files Include="{{REDIST_DIR}}\x86\*" Directory="INSTALLFOLDER32" />
+      <Files Include="{{REDIST_DIR}}\x86\engines\*" Directory="EnginesFolder32" />
+      <Files Include="{{REDIST_DIR}}\x86\providers\*" Directory="ProvidersFolder32" />
+    </Feature>
+    <?endif?>
+
+  </Package>
+</Wix>
