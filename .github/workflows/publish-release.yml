@@ -130,7 +130,7 @@ jobs:
           # 2. Upload artifacts (ZIP, EXE, MSIX)
           # The --clobber flag overwrites existing files with the same name safely
           echo "Uploading artifacts to $TAG_NAME..."
-          find artifacts -type f \( -name "*.zip" -o -name "*.exe" -o -name "*.msix" \) | while read -r asset; do
+          find artifacts -type f \( -name "*.zip" -o -name "*.exe" -o -name "*.msix" -o -name "*.msi" \) | while read -r asset; do
             echo "Uploading: $asset"
             gh release upload "$TAG_NAME" "$asset" --clobber
           done

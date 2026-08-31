@@ -1457,6 +1457,188 @@ jobs:
           archive: false
           retention-days: 5
   
+# =========================================================================
+  # 3c. BUILD WINDOWS WIX MSI INSTALLERS (Matrix) — Release Builds Only
+  # =========================================================================
+  wix-windows-installers:
+    name: Windows MSI (${{ matrix.arch }})
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
+    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   wix_arch: x64,   upgrade_code: "55bf14ca-1e2e-4a0f-8836-e5dbe6275942", pf_folder: "ProgramFiles64Folder" }
+          - { arch: x86,   wix_arch: x86,   upgrade_code: "78bdf7e2-ea72-4928-818a-5314814ce8e6", pf_folder: "ProgramFilesFolder" }
+          - { arch: arm64, wix_arch: arm64, upgrade_code: "1dc9c175-290b-4848-b7de-f5b1bc45a103", pf_folder: "ProgramFiles64Folder" }
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Download x64 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x64-shared-${{ github.run_id }}
+          path: raw-shared-x64
+
+      - name: Download x86 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x86-shared-${{ github.run_id }}
+          path: raw-shared-x86
+
+      - name: Download ARM64 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw-shared-arm64
+
+      - name: Download Common Assets
+        uses: actions/download-artifact@v8
+        with:
+          name: openssl-common-assets-${{ github.run_id }}
+          path: common-assets
+
+      - name: Stage Redistributables & Convert LICENSE to RTF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wsDir     = $env:GITHUB_WORKSPACE
+          $redist    = "$wsDir\redist"
+          $assetsDir = "$wsDir\assets"
+
+          foreach ($arch in @('x64', 'x86', 'arm64')) {
+            $archDir = "$redist\$arch"
+            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
+            $src = "$wsDir\raw-shared-$arch"
+
+            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
+            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
+            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
+
+            if (Test-Path "$src\providers") {
+              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
+            }
+            if (Test-Path "$src\engines") {
+              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
+            }
+          }
+
+          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
+
+          # Convert plain text LICENSE.txt to valid RTF on the fly for WixUI
+          $txt = Get-Content "common-assets\LICENSE.txt"
+          $rtfHeader = "{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Consolas;}}"
+          $rtfBody = ($txt | ForEach-Object { "$_ \par" }) -join "`r`n"
+          $rtf = "$rtfHeader`r`n\viewkind4\uc1\pard\f0\fs18 $rtfBody`r`n}"
+          [IO.File]::WriteAllText("$assetsDir\LICENSE.rtf", $rtf, [Text.UTF8Encoding]::new($false))
+          Write-Host "✅ Generated $assetsDir\LICENSE.rtf from LICENSE.txt"
+
+      - name: Build MSI with WiX v4
+        shell: pwsh
+        env:
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
+          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version     = '${{ needs.validate-version.outputs.version }}'
+          $arch        = '${{ matrix.arch }}'
+          $wixArch     = '${{ matrix.wix_arch }}'
+          $upgradeCode = '${{ matrix.upgrade_code }}'
+          $pfFolder    = '${{ matrix.pf_folder }}'
+          $wsDir       = $env:GITHUB_WORKSPACE
+          $parts       = $version -split '\.'
+          $fourPartVer = "$($parts[0]).$($parts[1]).$($parts[2]).0"
+          $pubName     = $env:APP_PUBLISHER
+          $pubUrl      = $env:APP_PUBLISHER_URL
+
+          # 1. Install WiX Toolset v4 via dotnet tool
+          Write-Host "Installing WiX Toolset v4..."
+          dotnet tool install --global wix --version 4.0.5
+          wix extension add --global WixToolset.UI.wixext/4.0.5
+
+          # 2. Populate openssl.wxs from template
+          $templatePath = "$wsDir\config\openssl.wxs.template"
+          $wxs = Get-Content $templatePath -Raw
+          $wxs = $wxs.Replace('{{VERSION}}', $version)
+          $wxs = $wxs.Replace('{{VERSION_FOUR_PART}}', $fourPartVer)
+          $wxs = $wxs.Replace('{{ARCH}}', $arch)
+          $wxs = $wxs.Replace('{{UPGRADE_CODE}}', $upgradeCode)
+          $wxs = $wxs.Replace('{{PROGRAM_FILES_FOLDER}}', $pfFolder)
+          $wxs = $wxs.Replace('{{APP_PUBLISHER}}', $pubName)
+          $wxs = $wxs.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
+          $wxs = $wxs.Replace('{{REDIST_DIR}}', "$wsDir\redist")
+          $wxs = $wxs.Replace('{{ASSETS_DIR}}', "$wsDir\assets")
+
+          $wxsPath = "$wsDir\openssl.wxs"
+          [IO.File]::WriteAllText($wxsPath, $wxs, [Text.UTF8Encoding]::new($false))
+
+          # 3. Build MSI
+          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
+          $msiOut = "$wsDir\installers\openssl-$version-Windows-$arch.msi"
+
+          Write-Host "Compiling MSI: $msiOut"
+          wix build $wxsPath -arch $wixArch -ext WixToolset.UI.wixext -o $msiOut
+          if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)" }
+          Write-Host "✅ MSI Created: $msiOut"
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign MSI (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\installers
+          files-folder-filter: msi
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed MSI
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msi
+          if ($files.Count -eq 0) { throw 'No .msi files found to verify.' }
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status:  $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "Invalid signature: $($file.Name)" }
+          }
+
+      - name: Upload MSI Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msi
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msi
+          archive: false
+          retention-days: 5
+
   # =========================================================================
   # 4. PACKAGE RELEASE (Fan-In Matrix)
   # =========================================================================
@@ -1697,7 +1879,7 @@ jobs:
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
-    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers]
+    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers, wix-windows-installers]
     runs-on: ubuntu-latest
     if: |
       always() &&
