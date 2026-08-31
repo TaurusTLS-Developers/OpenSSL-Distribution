@@ -746,6 +746,8 @@ jobs:
               if exist "providers\*.obj" copy "providers\*.obj" "%STAGED%\providers\"
               
               :: Stage OpenSSL engine objects
+              :: Stage all engine DSO objects across the build tree (e.g. engines/*.obj and crypto/pem/*loader_attic*.obj)
+              for /r . %%f in (*-dso-*.obj) do @copy "%%f" "%STAGED%\engines\" 2>nul
               if exist "engines\*.obj" copy "engines\*.obj" "%STAGED%\engines\"
           ) else (
               copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
