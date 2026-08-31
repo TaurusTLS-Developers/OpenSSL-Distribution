@@ -70,12 +70,12 @@ Source: "{{REDIST_DIR}}\x64\libssl-*.dll"; DestDir: "{code:Get64BitDir}"; Flags:
 Source: "{{REDIST_DIR}}\x64\providers\*.dll"; DestDir: "{code:Get64BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64Native
 Source: "{{REDIST_DIR}}\x64\engines\*.dll"; DestDir: "{code:Get64BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsX64Native
 
-; --- Native ARM64EC Files (installed on 64-bit ARM64 Windows OS) ---
-Source: "{{REDIST_DIR}}\arm64ec\openssl.exe"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
-Source: "{{REDIST_DIR}}\arm64ec\libcrypto-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
-Source: "{{REDIST_DIR}}\arm64ec\libssl-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
-Source: "{{REDIST_DIR}}\arm64ec\providers\*.dll"; DestDir: "{code:Get64BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
-Source: "{{REDIST_DIR}}\arm64ec\engines\*.dll"; DestDir: "{code:Get64BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
+; --- Native ARM64EC / ARM64 Files (installed on 64-bit ARM64 Windows OS) ---
+Source: "{{REDIST_DIR}}\arm64\openssl.exe"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64\libcrypto-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64\libssl-*.dll"; DestDir: "{code:Get64BitDir}"; Flags: ignoreversion; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64\providers\*.dll"; DestDir: "{code:Get64BitDir}\providers"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
+Source: "{{REDIST_DIR}}\arm64\engines\*.dll"; DestDir: "{code:Get64BitDir}\engines"; Flags: ignoreversion skipifsourcedoesntexist; Components: native; Check: IsArm64Native
 
 ; --- 32-bit (x86) Compatibility Files (installed on 64-bit Windows OS when selected) ---
 Source: "{{REDIST_DIR}}\x86\openssl.exe"; DestDir: "{code:Get32BitDir}"; Flags: ignoreversion; Components: x86compat; Check: Is64BitInstallMode

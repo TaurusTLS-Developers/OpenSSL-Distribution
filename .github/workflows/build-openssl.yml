@@ -230,7 +230,6 @@ jobs:
         platform:
           - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
           - { label: Windows, os: windows-latest, arch: x86, target: VC-WIN32, vcvars: x86 }
-          - { label: Windows, os: windows-latest, arch: arm64ec, target: VC-ARM64EC, vcvars: amd64_arm64 }
           - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
           - { label: Linux, os: ubuntu-latest, arch: arm64, target: linux-aarch64 }
           - { label: macOS, os: macos-14, arch: x64, target: darwin64-x86_64-cc, minos: "10.14" }
@@ -241,8 +240,8 @@ jobs:
           - { label: iOS, os: macos-14, arch: sim-arm64, target: iossimulator-xcrun, minos: "11.0" }
         exclude:
           - linkage: shared
-            platform: { label: iOS } # iOS is static only
-            
+            platform: { label: iOS }
+          
     runs-on: ${{ matrix.platform.os }}
     permissions:
       id-token: write
@@ -615,12 +614,521 @@ jobs:
           path: raw_artifact/dist
           retention-days: 1
           
+# =========================================================================
+  # 2b. COMPILE ARM64X SLICES IN PARALLEL (Native ARM64 + ARM64EC)
+  # =========================================================================
+  compile-windows-arm64x-slices:
+    name: Compile Windows ARM64X Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        linkage: [shared, static]
+        slice:
+          - { label: native-arm64, target: VC-WIN64-ARM, vcvars: amd64_arm64 }
+          - { label: arm64ec,      target: VC-ARM64EC,   vcvars: amd64_arm64 }
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.validate-version.outputs.target_repo }}
+          ref: ${{ needs.validate-version.outputs.sha }}
+
+      - name: Prepare HybridCRT Targets
+        shell: bash
+        run: |
+          cat << 'EOF' > Configurations/99-arm64x-prep.conf
+          my %targets = (
+              "VC-WIN64-ARM-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "tests", "makedepend", "__DOCS__" ],
+                  multilib     => "-arm64",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-WIN64-ARM-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "tests", "makedepend", "__DOCS__" ],
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      return "$f /MT /Zi";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-ARM64EC-SHARED" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "asm", "tests", "makedepend", "__DOCS__" ],
+                  multilib     => "-arm64",
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+              "VC-ARM64EC-STATIC" => {
+                  inherit_from => [ "VC-WIN64-ARM" ],
+                  disable      => [ "shared", "module", "asm", "tests", "makedepend", "__DOCS__" ],
+                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
+                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
+                  cflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MDd?\b//g;
+                      $f =~ s/\/arm64\b//ig;
+                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
+                  },
+                  lflags       => sub {
+                      my $f = join(" ", @_);
+                      $f =~ s/\/MACHINE:ARM64\b//ig;
+                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
+                  },
+              },
+          );
+          EOF
+
+          if grep -q "no-docs" INSTALL.md; then
+            sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-arm64x-prep.conf
+          else
+            sed -i 's/"__DOCS__"//g' Configurations/99-arm64x-prep.conf
+          fi
+
+      - name: Compile and Stage Slice Binaries
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.slice.vcvars }}
+          
+          set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
+          set "STAGED=%GITHUB_WORKSPACE%\slice_out"
+          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def"
+
+          set "LINK_UPPER=${{ matrix.linkage }}"
+          if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
+
+          perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
+          nmake && nmake install_sw
+
+          if "${{ matrix.linkage }}"=="shared" (
+              if exist "%INSTALL_TEMP%\bin\openssl.exe" copy "%INSTALL_TEMP%\bin\openssl.exe" "%STAGED%\"
+              copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
+              if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
+              if exist "%INSTALL_TEMP%\lib\engines-4" copy "%INSTALL_TEMP%\lib\engines-4\*.dll" "%STAGED%\engines\"
+              if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
+              
+              :: Preserve module definitions
+              if exist "*.def" copy "*.def" "%STAGED%\def\"
+              if exist "util\*.def" copy "util\*.def" "%STAGED%\def\"
+              if exist "providers\*.def" copy "providers\*.def" "%STAGED%\def\"
+              if exist "engines\*.def" copy "engines\*.def" "%STAGED%\def\"
+              
+              :: Stage OpenSSL provider helper libraries & entry point objects
+              if exist "providers\*.lib" copy "providers\*.lib" "%STAGED%\providers\"
+              if exist "providers\*-dso-*.obj" copy "providers\*-dso-*.obj" "%STAGED%\providers\"
+              if exist "providers\*.obj" copy "providers\*.obj" "%STAGED%\providers\"
+              
+              :: Stage OpenSSL engine objects
+              :: Stage all engine DSO objects across the build tree (e.g. engines/*.obj and crypto/pem/*loader_attic*.obj)
+              for /r . %%f in (*-dso-*.obj) do @copy "%%f" "%STAGED%\engines\" 2>nul
+              if exist "engines\*.obj" copy "engines\*.obj" "%STAGED%\engines\"
+          ) else (
+              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
+          )
+
+      - name: Upload Slice Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: slice-${{ matrix.slice.label }}-${{ matrix.linkage }}-${{ github.run_id }}
+          path: slice_out/
+          retention-days: 1
+
+  # =========================================================================
+  # 2c. MERGE, SIGN & VERIFY ARM64X BINARIES
+  # =========================================================================
+  merge-windows-arm64x:
+    name: Merge & Link ARM64X Binaries
+    needs: [validate-version, compile-windows-arm64x-slices]
+    runs-on: windows-latest
+    steps:
+      - name: Download Slices
+        uses: actions/download-artifact@v8
+        with:
+          pattern: slice-*
+          path: slices
+          merge-multiple: false
+
+      - name: Fuse ARM64X Binaries and Dynamic Modules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wsDir = $env:GITHUB_WORKSPACE
+          $distShared = "$wsDir\raw_shared\dist"
+          $distStatic = "$wsDir\raw_static\dist"
+          
+          # Locate MSVC Tools
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -property installationPath
+          if (-not (Test-Path $vsPath)) { throw "FATAL: Visual Studio installation path could not be resolved!" }
+          
+          $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
+          if (-not (Test-Path $dumpbin)) { throw "FATAL: Hostx64 dumpbin.exe not found!" }
+
+          # Initialize output directory structure
+          New-Item -ItemType Directory -Force -Path `
+            "$distStatic\lib\static\arm64", "$distStatic\lib\static\arm64ec", `
+            "$distShared\lib\import\arm64", "$distShared\lib\import\arm64ec", `
+            "$distShared\engines", "$distShared\providers" | Out-Null
+
+          # Resolve Slice Directories
+          $arm64Shared   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
+          $arm64Static   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
+          $arm64ecShared = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
+          $arm64ecStatic = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
+
+          if (-not $arm64Shared -or -not $arm64Static -or -not $arm64ecShared -or -not $arm64ecStatic) {
+            throw "FATAL: One or more slice directories were not found in $wsDir\slices!"
+          }
+
+          # -------------------------------------------------------------
+          # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libcrypto merge failed with exit code $LASTEXITCODE" }
+
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libssl merge failed with exit code $LASTEXITCODE" }
+
+          Copy-Item "$arm64Static\lib\static\*.lib" "$distStatic\lib\static\arm64\" -Force
+          Copy-Item "$arm64ecStatic\lib\static\*.lib" "$distStatic\lib\static\arm64ec\" -Force
+
+          # -------------------------------------------------------------
+          # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
+          $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
+          $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
+
+          if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
+          if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
+
+          # Link libcrypto-3-arm64.dll (ARM64X)
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
+
+          # Link libssl-3-arm64.dll (ARM64X)
+          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
+
+          Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
+          Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
+
+          # -------------------------------------------------------------
+          # 3. LINK TRUE ARM64X PROVIDERS (legacy.dll)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 3. Linking True ARM64X Providers ==="
+          if (Test-Path "$arm64ecShared\providers\legacy.dll") {
+            Write-Host "  -> Fusing ARM64X provider: providers\legacy.dll"
+
+            # 3a. Merge provider helper libraries (liblegacy.lib and libcommon.lib) into ARM64X
+            $mergedLegacyLib = "$wsDir\arm64x_liblegacy.lib"
+            $mergedCommonLib = "$wsDir\arm64x_libcommon.lib"
+
+            cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$mergedLegacyLib`" `"$arm64Shared\providers\liblegacy.lib`" `"$arm64ecShared\providers\liblegacy.lib`""
+            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to merge liblegacy.lib into ARM64X!" }
+
+            cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$mergedCommonLib`" `"$arm64Shared\providers\libcommon.lib`" `"$arm64ecShared\providers\libcommon.lib`""
+            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to merge libcommon.lib into ARM64X!" }
+
+            # 3b. Extract exports for legacy.dll
+            $exportsDump = & $dumpbin /exports "$arm64ecShared\providers\legacy.dll" | Out-String
+            $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object { $matches[1] }
+            if ($exportLines.Count -eq 0) { $exportLines = @("OSSL_provider_init") }
+
+            $legacyDef = "$wsDir\def_legacy.def"
+            $defContent = "LIBRARY legacy`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
+            [IO.File]::WriteAllText($legacyDef, $defContent)
+
+            # 3c. Collect entry point objects (legacyprov.obj)
+            $legacyObjArm64   = Get-ChildItem "$arm64Shared\providers" -Filter "*legacy*.obj" | Select-Object -ExpandProperty FullName -First 1
+            $legacyObjArm64ec = Get-ChildItem "$arm64ecShared\providers" -Filter "*legacy*.obj" | Select-Object -ExpandProperty FullName -First 1
+
+            if (-not $legacyObjArm64 -or -not $legacyObjArm64ec) {
+              throw "FATAL: legacyprov entry point object not found in slice artifacts!"
+            }
+
+            # 3d. Link true ARM64X legacy.dll
+            $legacyRsp = "$wsDir\link_legacy.rsp"
+            $rspLines = @(
+              "/NOLOGO",
+              "/DLL",
+              "/MACHINE:ARM64X",
+              "/OUT:`"$distShared\providers\legacy.dll`"",
+              "/DEF:`"$legacyDef`"",
+              "/DEFARM64NATIVE:`"$legacyDef`"",
+              "`"$legacyObjArm64`"",
+              "`"$legacyObjArm64ec`"",
+              "`"$mergedLegacyLib`"",
+              "`"$mergedCommonLib`"",
+              "`"$distShared\lib\import\libcrypto.lib`"",
+              "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
+              "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
+            )
+            [IO.File]::WriteAllLines($legacyRsp, $rspLines)
+
+            cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$legacyRsp`""
+            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to link true ARM64X providers\legacy.dll!" }
+            Write-Host "     [+] Successfully linked TRUE ARM64X providers\legacy.dll"
+          }
+
+          # -------------------------------------------------------------
+          # 4. LINK TRUE ARM64X ENGINES (capi, padlock, loader_attic, etc.)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 4. Linking True ARM64X Engines ==="
+          if (Test-Path "$arm64ecShared\engines") {
+            $engineDlls = Get-ChildItem "$arm64ecShared\engines" -Filter "*.dll"
+            foreach ($dll in $engineDlls) {
+              $engName = $dll.BaseName
+              Write-Host "  -> Fusing ARM64X engine: engines\$($dll.Name)"
+
+              # 4a. Extract exports
+              $exportsDump = & $dumpbin /exports $dll.FullName | Out-String
+              $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object { $matches[1] }
+              if ($exportLines.Count -eq 0) { $exportLines = @("bind_engine", "v_check") }
+
+              $engDef = "$wsDir\def_$engName.def"
+              $defContent = "LIBRARY $engName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
+              [IO.File]::WriteAllText($engDef, $defContent)
+
+              # 4b. Collect ALL engine objects (no -First 1, force array @(...) to include secondary objects like pvkfmt.obj)
+              $engObjsArm64   = @(Get-ChildItem "$arm64Shared\engines" -Filter "*$engName*.obj" | Select-Object -ExpandProperty FullName)
+              $engObjsArm64ec = @(Get-ChildItem "$arm64ecShared\engines" -Filter "*$engName*.obj" | Select-Object -ExpandProperty FullName)
+
+              if ($engObjsArm64.Count -eq 0 -or $engObjsArm64ec.Count -eq 0) {
+                throw "FATAL: Object files for engine $engName not found in slice artifacts!"
+              }
+
+              $allEngObjs = $engObjsArm64 + $engObjsArm64ec
+
+              # 4c. Write Response File (Links engine objects + import libcrypto.lib ONLY, NO static libcrypto)
+              $engRsp = "$wsDir\link_$engName.rsp"
+              $rspLines = @(
+                "/NOLOGO",
+                "/DLL",
+                "/MACHINE:ARM64X",
+                "/OUT:`"$distShared\engines\$($dll.Name)`"",
+                "/DEF:`"$engDef`"",
+                "/DEFARM64NATIVE:`"$engDef`"",
+                "`"$distShared\lib\import\libcrypto.lib`"",
+                "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
+                "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
+              ) + ($allEngObjs | ForEach-Object { "`"$_`"" })
+
+              [IO.File]::WriteAllLines($engRsp, $rspLines)
+
+              # 4d. Link true ARM64X engine DLL
+              cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$engRsp`""
+              if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to link true ARM64X engines\$($dll.Name)!" }
+              Write-Host "     [+] Successfully linked TRUE ARM64X engines\$($dll.Name)"
+            }
+          }
+
+          # -------------------------------------------------------------
+          # 5. STAGE PURE NATIVE ARM64 openssl.exe
+          # -------------------------------------------------------------
+          Write-Host "`n=== 5. Staging Native ARM64 openssl.exe ==="
+          if (-not (Test-Path "$arm64Shared\openssl.exe")) {
+            throw "FATAL: Native ARM64 openssl.exe not found in $arm64Shared!"
+          }
+          Copy-Item "$arm64Shared\openssl.exe" "$distShared\openssl.exe" -Force
+
+          # -------------------------------------------------------------
+          # 6. STRICT CLEANUP (Keep ONLY *.dll in modules, ONLY *.lib in import)
+          # -------------------------------------------------------------
+          Write-Host "`n=== 6. Cleaning Up Leftover Build Artifacts ==="
+          Get-ChildItem "$distShared\engines", "$distShared\providers" -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne '.dll' } |
+            ForEach-Object {
+              Write-Host "  [-] Removing intermediate build file: $($_.FullName)"
+              Remove-Item $_.FullName -Force
+            }
+
+          Get-ChildItem "$distShared\lib\import" -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne '.lib' } |
+            ForEach-Object {
+              Write-Host "  [-] Removing intermediate import file: $($_.FullName)"
+              Remove-Item $_.FullName -Force
+            }
+
+      # -----------------------------------------------------------------
+      # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
+      # -----------------------------------------------------------------
+      - name: Recursive Deep Verification of All ARM64X Binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Point to raw_shared\dist where shared binaries are staged
+          $dist = "$env:GITHUB_WORKSPACE\raw_shared\dist"
+
+          # Locate dumpbin.exe
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
+
+          Write-Host "Using Dumpbin: $dumpbin"
+          Write-Host "Inspecting Directory: $dist"
+
+          # 1. Verify openssl.exe is Pure Native ARM64 (AA64)
+          $exePath = "$dist\openssl.exe"
+          Write-Host "`n=== Checking openssl.exe: $exePath ==="
+          if (-not (Test-Path $exePath)) {
+            throw "openssl.exe not found at $exePath!"
+          }
+
+          $exeHeaders = & $dumpbin /headers $exePath | Out-String
+          Write-Host "--- dumpbin /headers openssl.exe output ---"
+          Write-Host $exeHeaders
+
+          $isNativeArm64 = $exeHeaders -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $exeHeaders -match "(?i)machine\s+\(ARM64\)"
+          Write-Host "Comparison: Pattern='AA64 machine (ARM64)' | Matched=$isNativeArm64"
+
+          if (-not $isNativeArm64) {
+            throw "openssl.exe failed verification: Output does not match Native ARM64 (AA64)!"
+          }
+          Write-Host "✅ openssl.exe is confirmed Native ARM64"
+
+          # 2. Recursively verify EVERY DLL in dist/, providers/, and engines/
+          $allDlls = Get-ChildItem $dist -Recurse -Filter "*.dll"
+          if ($allDlls.Count -eq 0) { throw "No DLLs found in $dist directory!" }
+
+          Write-Host "`n=== Recursively Verifying All ($($allDlls.Count)) DLLs for ARM64X ==="
+          $failed = $false
+
+          foreach ($dll in $allDlls) {
+            $relPath = $dll.FullName.Substring($dist.Length + 1)
+            Write-Host "`n[+] Inspecting: $relPath"
+
+            $headers    = & $dumpbin /headers $dll.FullName | Out-String
+            $loadConfig = & $dumpbin /loadconfig $dll.FullName | Out-String
+
+            Write-Host "--- dumpbin machine line ($relPath) ---"
+            Write-Host ($headers | Select-String "machine").Line
+
+            # Check A: Base machine header must be ARM64 (AA64)
+            $isArm64Header = $headers -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $headers -match "(?i)machine\s+\(.*ARM64.*\)"
+            
+            # Check B: Must contain Dynamic Value Relocation Table (DVRT) storing the EC slice
+            $hasDvrt = $loadConfig -match "(?i)Dynamic Value Relocation Table" -or $loadConfig -match "(?i)ARM64X"
+
+            Write-Host "  -> Comparison: Base ARM64 Header=$isArm64Header | DVRT Table=$hasDvrt"
+
+            if (-not $isArm64Header) {
+              Write-Error "FAILED: $relPath is not an ARM64-based PE binary!"
+              $failed = $true
+            } elseif (-not $hasDvrt) {
+              Write-Error "FAILED: $relPath is missing the Dynamic Value Relocation Table (EC slice not embedded)!"
+              $failed = $true
+            } else {
+              Write-Host "    -> Verified: True ARM64X dual-architecture binary."
+            }
+          }
+
+          if ($failed) {
+            throw "ARM64X verification failed! One or more DLLs do not contain true dual-architecture payloads."
+          }
+
+          Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
+
+      - name: Check for Windows Binaries to Sign
+        id: check_binaries
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
+          if ($files.Count -gt 0) {
+            Write-Host "Found $($files.Count) binary file(s) to sign."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=true"
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=false"
+          }
+
+      - name: Azure Login
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        uses: azure/login@v3
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign Windows ARM64X Binaries
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\raw_shared\dist
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed Windows ARM64X Binaries
+        if: steps.check_binaries.outputs.has_binaries == 'true'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
+          $failed = $false
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status: $($sig.Status) | Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Error "Invalid signature: $($file.Name)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Upload Raw ARM64 Shared Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw_shared/dist
+          retention-days: 1
+
+      - name: Upload Raw ARM64 Static Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: raw-Windows-arm64-static-${{ github.run_id }}
+          path: raw_static/dist
+          retention-days: 1
+
   # =========================================================================
   # 3a. BUILD WINDOWS MULTI-ARCH INSTALLER — Release Builds Only
   # =========================================================================
   InnoSetup-windows-installer:
     name: Inno Setup Windows Multi-Arch Installer
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     runs-on: windows-latest
     permissions:
@@ -656,11 +1164,11 @@ jobs:
           name: raw-Windows-x86-shared-${{ github.run_id }}
           path: raw-shared-x86
 
-      - name: Download ARM64EC Shared Artifact
+      - name: Download ARM64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
-          name: raw-Windows-arm64ec-shared-${{ github.run_id }}
-          path: raw-shared-arm64ec
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw-shared-arm64
 
       - name: Download Common Assets
         uses: actions/download-artifact@v8
@@ -674,7 +1182,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $redist = "$env:GITHUB_WORKSPACE\redist"
 
-          foreach ($arch in @('x64', 'x86', 'arm64ec')) {
+          foreach ($arch in @('x64', 'x86', 'arm64')) {
             $archDir = "$redist\$arch"
             New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
             $src = "$env:GITHUB_WORKSPACE\raw-shared-$arch"
@@ -797,15 +1305,15 @@ jobs:
   # =========================================================================
   msix-windows-installers:
     name: Windows MSIX Framework (${{ matrix.arch }})
-    needs: [validate-version, build-common-assets, compile-binaries]
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64,     msix_arch: x64 }
-          - { arch: x86,     msix_arch: x86 }
-          - { arch: arm64ec, msix_arch: arm64 }
+          - { arch: x64,   msix_arch: x64 }
+          - { arch: x86,   msix_arch: x86 }
+          - { arch: arm64, msix_arch: arm64 }
     runs-on: windows-latest
     permissions:
       id-token: write
@@ -955,8 +1463,7 @@ jobs:
 
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
-    needs:  [validate-version, build-common-assets, compile-binaries]
-    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     strategy:
       fail-fast: false
       matrix:
@@ -964,7 +1471,7 @@ jobs:
           # Windows packaging moved to ubuntu-latest for speed and native 'zip' support
           - { label: Windows, arch: x64, runner: ubuntu-latest }
           - { label: Windows, arch: x86, runner: ubuntu-latest }
-          - { label: Windows, arch: arm64ec, runner: ubuntu-latest }
+          - { label: Windows, arch: arm64, runner: ubuntu-latest }
           
           # Linux & Android
           - { label: Linux, arch: x64, runner: ubuntu-latest }
@@ -1186,7 +1693,7 @@ jobs:
           retention-days: 5
 
   # =========================================================================
-  # 5. CLEANUP RAW ARTIFACTS
+  # 5. CLEANUP RAW & INTERMEDIATE ARTIFACTS
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
@@ -1200,18 +1707,20 @@ jobs:
     permissions:
       actions: write
     steps:
-      - name: Delete Raw and Common Artifacts
+      - name: Delete Intermediate Artifacts (raw, slice, common-assets)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Fetching artifacts for run ${{ github.run_id }}..."
           
-          # Use gh api to list artifacts specifically for THIS run to avoid conflicts
+          # List all artifacts for THIS run
           ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
           
-          # Filter for IDs of artifacts that start with 'raw-' or are 'openssl-common-assets'
-          # We also verify the name ends with the run_id for triple-redundancy
-          IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | (startswith(\"raw-\") and endswith(\"-${{ github.run_id }}\")) or . == \"openssl-common-assets-${{ github.run_id }}\") | .id")
+          # Filter for IDs of artifacts matching:
+          # - 'raw-*'
+          # - 'slice-*' (ARM64X compilation slices)
+          # - 'openssl-common-assets-*'
+          IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | ((startswith(\"raw-\") or startswith(\"slice-\")) and endswith(\"-${{ github.run_id }}\")) or . == \"openssl-common-assets-${{ github.run_id }}\") | .id")
           
           if [ -z "$IDS" ] || [ "$IDS" == "null" ]; then
             echo "No intermediate artifacts found to delete."
@@ -1219,8 +1728,8 @@ jobs:
           fi
           
           for id in $IDS; do
-            echo "Deleting artifact ID: $id"
-            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true # Continue even if deletion fails
+            echo "Deleting intermediate artifact ID: $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true
           done
           
-          echo "✅ Cleanup complete."
+          echo "✅ Intermediate artifact cleanup complete."
