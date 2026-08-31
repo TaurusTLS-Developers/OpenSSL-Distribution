@@ -1570,10 +1570,10 @@ jobs:
           $pubName     = $env:APP_PUBLISHER
           $pubUrl      = $env:APP_PUBLISHER_URL
 
-          # 1. Install WiX Toolset v4 via dotnet tool
-          Write-Host "Installing WiX Toolset v4..."
-          dotnet tool install --global wix --version 4.0.5
-          wix extension add --global WixToolset.UI.wixext/4.0.5
+          # 1. Install WiX Toolset v5 via dotnet tool
+          Write-Host "Installing WiX Toolset v5..."
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
 
           # 2. Populate openssl.wxs from template
           $templatePath = "$wsDir\config\openssl.wxs.template"
