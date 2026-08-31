@@ -28,10 +28,7 @@
     <!-- Directory Structure -->
     <StandardDirectory Id="{{PROGRAM_FILES_FOLDER}}">
       <Directory Id="ManufacturerFolder" Name="{{APP_PUBLISHER}}">
-        <Directory Id="INSTALLFOLDER" Name="OpenSSL-{{VERSION}}">
-          <Directory Id="EnginesFolder" Name="engines" />
-          <Directory Id="ProvidersFolder" Name="providers" />
-        </Directory>
+        <Directory Id="INSTALLFOLDER" Name="OpenSSL-{{VERSION}}" />
       </Directory>
     </StandardDirectory>
 
@@ -39,28 +36,19 @@
     <?if $(sys.BUILDARCH) = "x64" ?>
     <StandardDirectory Id="ProgramFilesFolder">
       <Directory Id="ManufacturerFolder32" Name="{{APP_PUBLISHER}}">
-        <Directory Id="INSTALLFOLDER32" Name="OpenSSL-{{VERSION}}">
-          <Directory Id="EnginesFolder32" Name="engines" />
-          <Directory Id="ProvidersFolder32" Name="providers" />
-        </Directory>
+        <Directory Id="INSTALLFOLDER32" Name="OpenSSL-{{VERSION}}" />
       </Directory>
     </StandardDirectory>
     <?endif?>
 
     <!-- ================================================================= -->
-    <!-- FEATURES & COMPONENT GROUPS                                       -->
+    <!-- COMPONENT GROUPS (WiX v4 requires <Files> inside <ComponentGroup>)-->
     <!-- ================================================================= -->
 
-    <!-- 1. Native Runtime Feature -->
-    <Feature Id="NativeRuntime"
-             Title="OpenSSL Native Runtime"
-             Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
-             Level="1"
-             AllowAbsent="no">
-      <Files Include="{{REDIST_DIR}}\{{ARCH}}\*" Directory="INSTALLFOLDER" />
-      <Files Include="{{REDIST_DIR}}\{{ARCH}}\engines\*" Directory="EnginesFolder" />
-      <Files Include="{{REDIST_DIR}}\{{ARCH}}\providers\*" Directory="ProvidersFolder" />
-      <Component Directory="INSTALLFOLDER">
+    <ComponentGroup Id="NativeComponents" Directory="INSTALLFOLDER">
+      <!-- Recursively harvests openssl.exe, DLLs, engines\, and providers\ -->
+      <Files Include="{{REDIST_DIR}}\{{ARCH}}\**" />
+      <Component>
         <File Source="{{REDIST_DIR}}\LICENSE.txt" />
         <Environment Id="UpdatePath"
                      Name="PATH"
@@ -70,6 +58,26 @@
                      Action="set"
                      System="yes" />
       </Component>
+    </ComponentGroup>
+
+    <?if $(sys.BUILDARCH) = "x64" ?>
+    <ComponentGroup Id="X86CompatComponents" Directory="INSTALLFOLDER32">
+      <!-- Recursively harvests 32-bit x86 binaries, engines\, and providers\ -->
+      <Files Include="{{REDIST_DIR}}\x86\**" />
+    </ComponentGroup>
+    <?endif?>
+
+    <!-- ================================================================= -->
+    <!-- FEATURES (Referencing Component Groups)                           -->
+    <!-- ================================================================= -->
+
+    <!-- 1. Native Runtime Feature -->
+    <Feature Id="NativeRuntime"
+             Title="OpenSSL Native Runtime"
+             Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
+             Level="1"
+             AllowAbsent="no">
+      <ComponentGroupRef Id="NativeComponents" />
     </Feature>
 
     <!-- 2. Optional 32-bit (x86) Compatibility Feature on x64 -->
@@ -79,9 +87,7 @@
              Description="Installs 32-bit libraries to Program Files (x86) for 32-bit application compatibility."
              Level="2"
              AllowAbsent="yes">
-      <Files Include="{{REDIST_DIR}}\x86\*" Directory="INSTALLFOLDER32" />
-      <Files Include="{{REDIST_DIR}}\x86\engines\*" Directory="EnginesFolder32" />
-      <Files Include="{{REDIST_DIR}}\x86\providers\*" Directory="ProvidersFolder32" />
+      <ComponentGroupRef Id="X86CompatComponents" />
     </Feature>
     <?endif?>
 
