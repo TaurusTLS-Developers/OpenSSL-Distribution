@@ -1648,7 +1648,8 @@ jobs:
             }
           }
 
-          Copy-Item "common-assets\LICENSE.rtf" $redist -ErrorAction SilentlyContinue
+          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
+          Copy-Item "common-assets\LICENSE.rtf" $assetsDir -Force
 
       - name: Build MSI with WiX v4
         shell: pwsh

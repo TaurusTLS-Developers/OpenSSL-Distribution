@@ -42,10 +42,10 @@
     <?endif?>
 
     <!-- ================================================================= -->
-    <!-- FEATURES (WiX v5 native file harvesting)                          -->
+    <!-- FEATURES                                                          -->
     <!-- ================================================================= -->
 
-    <!-- 1. Native Runtime Feature -->
+    <!-- 1. Native Runtime Feature (Configurable Directory) -->
     <Feature Id="NativeRuntime"
              Title="OpenSSL Native Runtime"
              Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
@@ -55,25 +55,52 @@
       <Files Include="{{REDIST_DIR}}\{{ARCH}}\**" Directory="INSTALLFOLDER" />
       <Component Directory="INSTALLFOLDER">
         <File Source="{{REDIST_DIR}}\LICENSE.txt" />
-        <Environment Id="UpdatePath"
-                     Name="PATH"
-                     Value="[INSTALLFOLDER]"
-                     Permanent="no"
-                     Part="first"
-                     Action="set"
-                     System="yes" />
       </Component>
+
+      <!-- Sub-Feature: Optional PATH environment modification -->
+      <Feature Id="NativePathEnv"
+               Title="Add native directory to PATH"
+               Description="Adds the native OpenSSL installation directory to the system PATH environment variable."
+               Level="1"
+               AllowAbsent="yes">
+        <Component Directory="INSTALLFOLDER">
+          <Environment Id="UpdatePath"
+                       Name="PATH"
+                       Value="[INSTALLFOLDER]"
+                       Permanent="no"
+                       Part="last"
+                       Action="set"
+                       System="yes" />
+        </Component>
+      </Feature>
     </Feature>
 
-    <!-- 2. Optional 32-bit (x86) Compatibility Feature on x64 -->
+    <!-- 2. Optional 32-bit (x86) Compatibility Feature on x64 (Configurable Directory) -->
     <?if $(sys.BUILDARCH) = "x64" ?>
     <Feature Id="x86CompatRuntime"
              Title="32-bit (x86) Compatibility Runtime"
              Description="Installs 32-bit libraries to Program Files (x86) for 32-bit application compatibility."
              Level="2"
+             ConfigurableDirectory="INSTALLFOLDER32"
              AllowAbsent="yes">
-      <!-- Harvests 32-bit x86 files, engines\, and providers\ recursively -->
       <Files Include="{{REDIST_DIR}}\x86\**" Directory="INSTALLFOLDER32" />
+
+      <!-- Sub-Feature: Optional 32-bit PATH environment modification -->
+      <Feature Id="x86PathEnv"
+               Title="Add 32-bit directory to PATH"
+               Description="Adds the 32-bit OpenSSL installation directory to the system PATH environment variable."
+               Level="2"
+               AllowAbsent="yes">
+        <Component Directory="INSTALLFOLDER32">
+          <Environment Id="UpdatePath32"
+                       Name="PATH"
+                       Value="[INSTALLFOLDER32]"
+                       Permanent="no"
+                       Part="last"
+                       Action="set"
+                       System="yes" />
+        </Component>
+      </Feature>
     </Feature>
     <?endif?>
 
