@@ -9,9 +9,10 @@
            Language="1033"
            Scope="perMachine">
 
-    <!-- Custom Title in Windows Explorer Properties -> Details Tab -->
-    <SummaryInformation Title="OpenSSL {{VERSION}} ({{ARCH}}) Installer"
-                        Description="OpenSSL {{VERSION}} ({{ARCH}}) Installer"
+    <!-- Summary Information Stream (Windows Explorer Properties -> Details) -->
+    <SummaryInformation Description="OpenSSL {{VERSION}} ({{ARCH}}) Installer"
+                        Comments="This package installs OpenSSL {{VERSION}} ({{ARCH}})."
+                        Keywords="Installer, OpenSSL, {{ARCH}}"
                         Manufacturer="{{APP_PUBLISHER}}" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
