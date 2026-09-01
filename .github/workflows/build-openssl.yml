@@ -55,6 +55,8 @@ jobs:
       actions: write
     outputs:
       version: ${{ steps.check.outputs.version }}
+      major_minor: ${{ steps.check.outputs.major_minor }}
+      inno_app_id: ${{ steps.check.outputs.inno_app_id }}
       target_repo: ${{ steps.check.outputs.target_repo }}
       ref: ${{ steps.check.outputs.ref }}
       sha: ${{ steps.check.outputs.sha }}
@@ -134,8 +136,16 @@ jobs:
             SAFE_PART=$(echo "$SLUGIFIED_VERSION" | cut -c 1-100)
             ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
           fi
+
+          # Extract Major.Minor (e.g. 3.0, 3.5, 4.0)
+          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+          
+          # Generate deterministic RFC 4122 UUIDv5 for InnoSetup AppId
+          INNO_APP_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, 'taurustls.openssl.inno.$MAJOR_MINOR'))" | tr '[:lower:]' '[:upper:]')
           
           # Output resolved information
+          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
+          echo "inno_app_id=$INNO_APP_ID" >> $GITHUB_OUTPUT
           echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
           echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
           echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
@@ -1323,13 +1333,14 @@ jobs:
           APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version   = '${{ needs.validate-version.outputs.version }}'
-          $appId     = 'B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5'
-          $wsDir     = $env:GITHUB_WORKSPACE
-          $redistDir = "$wsDir\redist"
-          $assetsDir = "$wsDir\assets"
-          $pubName   = $env:APP_PUBLISHER
-          $pubUrl    = $env:APP_PUBLISHER_URL
+          $version    = '${{ needs.validate-version.outputs.version }}'
+          $majorMinor = '${{ needs.validate-version.outputs.major_minor }}'
+          $appId      = '${{ needs.validate-version.outputs.inno_app_id }}'
+          $wsDir      = $env:GITHUB_WORKSPACE
+          $redistDir  = "$wsDir\redist"
+          $assetsDir  = "$wsDir\assets"
+          $pubName    = $env:APP_PUBLISHER
+          $pubUrl     = $env:APP_PUBLISHER_URL
 
           New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
 
@@ -1340,6 +1351,7 @@ jobs:
           $iss = Get-Content $templatePath -Raw
           $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
           $iss = $iss.Replace('{{VERSION}}', $version)
+          $iss = $iss.Replace('{{MAJOR_MINOR}}', $majorMinor)
           $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
           $iss = $iss.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
           $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
@@ -1506,6 +1518,7 @@ jobs:
           # Substitute AppxManifest template tokens
           $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
           $xmlPubName   = [System.Security.SecurityElement]::Escape($pubName)
+          $majorMinor   = '${{ needs.validate-version.outputs.major_minor }}'
 
           $templatePath = "$wsDir\config\AppxManifest.xml.template"
           $xml = Get-Content $templatePath -Raw
@@ -1513,6 +1526,7 @@ jobs:
           $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
           $xml = $xml.Replace('{{MSIX_ARCH}}', $msixArch)
           $xml = $xml.Replace('{{VERSION}}', $version)
+          $xml = $xml.Replace('{{MAJOR_MINOR}}', $majorMinor)
           $xml = $xml.Replace('{{ARCH}}', $arch)
           $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $xmlPubName)
 
@@ -1651,7 +1665,7 @@ jobs:
           Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
           Copy-Item "common-assets\LICENSE.rtf" $assetsDir -Force
 
-      - name: Build MSI with WiX v4
+      - name: Build MSI with WiX
         shell: pwsh
         env:
           APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
@@ -1659,15 +1673,21 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version     = '${{ needs.validate-version.outputs.version }}'
+          $majorMinor  = '${{ needs.validate-version.outputs.major_minor }}'
           $arch        = '${{ matrix.arch }}'
           $wixArch     = '${{ matrix.wix_arch }}'
-          $upgradeCode = '${{ matrix.upgrade_code }}'
           $pfFolder    = '${{ matrix.pf_folder }}'
           $wsDir       = $env:GITHUB_WORKSPACE
           $parts       = $version -split '\.'
           $fourPartVer = "$($parts[0]).$($parts[1]).$($parts[2]).0"
           $pubName     = $env:APP_PUBLISHER
           $pubUrl      = $env:APP_PUBLISHER_URL
+
+          # Deterministic UpgradeCode per (Major.Minor + Architecture)
+          $bytes       = [System.Text.Encoding]::UTF8.GetBytes("taurustls.openssl.wix.$majorMinor.$arch")
+          $hash        = [System.Security.Cryptography.MD5]::Create().ComputeHash($bytes)
+          $upgradeCode = [System.Guid]::new($hash).ToString().ToUpper()
+          Write-Host "Resolved UpgradeCode for $majorMinor ($arch): $upgradeCode"
 
           # 1. Install WiX Toolset v5 via dotnet tool
           Write-Host "Installing WiX Toolset v5..."
@@ -1679,6 +1699,7 @@ jobs:
           $wxs = Get-Content $templatePath -Raw
           $wxs = $wxs.Replace('{{VERSION}}', $version)
           $wxs = $wxs.Replace('{{VERSION_FOUR_PART}}', $fourPartVer)
+          $wxs = $wxs.Replace('{{MAJOR_MINOR}}', $majorMinor)
           $wxs = $wxs.Replace('{{ARCH}}', $arch)
           $wxs = $wxs.Replace('{{UPGRADE_CODE}}', $upgradeCode)
           $wxs = $wxs.Replace('{{PROGRAM_FILES_FOLDER}}', $pfFolder)

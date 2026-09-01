@@ -2,6 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
+  <!-- Package Name displays the FULL version in Add/Remove Programs (e.g. OpenSSL 3.0.22 (x64)) -->
   <Package Name="OpenSSL {{VERSION}} ({{ARCH}})"
            Manufacturer="{{APP_PUBLISHER}}"
            Version="{{VERSION_FOUR_PART}}"
@@ -9,14 +10,12 @@
            Language="1033"
            Scope="perMachine">
 
-    <!-- Summary Information Stream (Windows Explorer Properties -> Details) -->
     <SummaryInformation Description="OpenSSL {{VERSION}} ({{ARCH}}) Installer"
-                        Comments="This package installs OpenSSL {{VERSION}} ({{ARCH}})."
+                        Comments="Installs OpenSSL {{VERSION}} ({{ARCH}})."
                         Keywords="Installer, OpenSSL, {{ARCH}}"
                         Manufacturer="{{APP_PUBLISHER}}" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
-    
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Visual Branding -->
@@ -24,29 +23,29 @@
     <Icon Id="ProductIcon" SourceFile="{{ASSETS_DIR}}\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
     <Property Id="ARPHELPLINK" Value="{{APP_PUBLISHER_URL}}" />
+    <Property Id="DisplayVersion" Value="{{VERSION}}" />
 
-    <!-- UI: Interactive Feature Selection Tree with License -->
     <ui:WixUI Id="WixUI_FeatureTree" />
 
-    <!-- Directory Structure -->
+    <!-- Installation Directory: OpenSSL-3.0 (Major.Minor) -->
     <StandardDirectory Id="{{PROGRAM_FILES_FOLDER}}">
       <Directory Id="ManufacturerFolder" Name="{{APP_PUBLISHER}}">
-        <Directory Id="INSTALLFOLDER" Name="OpenSSL-{{VERSION}}" />
+        <Directory Id="INSTALLFOLDER" Name="OpenSSL-{{MAJOR_MINOR}}" />
       </Directory>
     </StandardDirectory>
 
-    <!-- Start Menu Folder Structure -->
+    <!-- Start Menu Folder: OpenSSL-3.0 (Major.Minor) -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ProgramMenuManufacturerFolder" Name="{{APP_PUBLISHER}}">
-        <Directory Id="ApplicationProgramsFolder" Name="OpenSSL-{{VERSION}}" />
+        <Directory Id="ApplicationProgramsFolder" Name="OpenSSL-{{MAJOR_MINOR}}" />
       </Directory>
     </StandardDirectory>
 
-    <!-- 32-bit Compatibility Directory (Available on 64-bit systems) -->
+    <!-- 32-bit Compatibility Directory on x64 OS -->
     <?if $(sys.BUILDARCH) = "x64" ?>
     <StandardDirectory Id="ProgramFilesFolder">
       <Directory Id="ManufacturerFolder32" Name="{{APP_PUBLISHER}}">
-        <Directory Id="INSTALLFOLDER32" Name="OpenSSL-{{VERSION}}" />
+        <Directory Id="INSTALLFOLDER32" Name="OpenSSL-{{MAJOR_MINOR}}" />
       </Directory>
     </StandardDirectory>
     <?endif?>
@@ -55,7 +54,7 @@
     <!-- FEATURES                                                          -->
     <!-- ================================================================= -->
 
-    <!-- 1. Native Runtime Feature (Configurable Directory) -->
+    <!-- 1. Native Runtime Feature -->
     <Feature Id="NativeRuntime"
              Title="OpenSSL Native Runtime"
              Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
@@ -68,26 +67,26 @@
         <File Source="{{REDIST_DIR}}\LICENSE.txt" />
       </Component>
 
-      <!-- Start Menu Command Prompt Shortcut (Native) -->
+      <!-- Start Menu Shortcut: Displays Major.Minor name, with full version in description tooltip -->
       <Component Id="NativeShortcutComponent" Guid="A2B3C4D5-E6F7-4890-1234-56789ABCDEF0" Directory="ApplicationProgramsFolder">
         <Shortcut Id="OpenSSLCommandPrompt"
-                  Name="OpenSSL {{VERSION}} Command Prompt"
-                  Description="Open Command Prompt with OpenSSL {{VERSION}} environment"
+                  Name="OpenSSL {{MAJOR_MINOR}} Command Prompt"
+                  Description="OpenSSL {{VERSION}} ({{ARCH}}) Command Prompt"
                   Target="[SystemFolder]cmd.exe"
-                  Arguments="/K &quot;set PATH=[INSTALLFOLDER];%PATH% &amp; title OpenSSL {{VERSION}} Environment &amp; echo OpenSSL {{VERSION}} Command Prompt Ready.&quot;"
+                  Arguments="/K &quot;set PATH=[INSTALLFOLDER];%PATH% &amp; title OpenSSL {{VERSION}} ({{ARCH}}) Environment &amp; echo OpenSSL {{VERSION}} ({{ARCH}}) Command Prompt Ready.&quot;"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="ProductIcon" />
         <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RemoveFolder Id="RemoveProgramMenuManufacturerFolder" Directory="ProgramMenuManufacturerFolder" On="uninstall" />
         <RegistryValue Root="HKCU"
-                       Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}"
+                       Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{MAJOR_MINOR}}"
                        Name="StartMenuShortcut"
                        Type="integer"
                        Value="1"
                        KeyPath="yes" />
       </Component>
 
-      <!-- Sub-Feature: Optional PATH environment modification -->
+      <!-- Optional PATH sub-feature -->
       <Feature Id="NativePathEnv"
                Title="Add native directory to PATH"
                Description="Adds the native OpenSSL installation directory to the system PATH environment variable."
@@ -95,7 +94,7 @@
                AllowAbsent="yes">
         <Component Id="NativePathComponent" Guid="6A47B2E5-3C2D-4E1F-8A9B-0C1D2E3F4A5B" Directory="INSTALLFOLDER">
           <RegistryValue Root="HKLM"
-                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}"
+                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{MAJOR_MINOR}}"
                          Name="PathSet"
                          Type="integer"
                          Value="1"
@@ -104,14 +103,14 @@
                        Name="PATH"
                        Value="[INSTALLFOLDER]"
                        Permanent="no"
-                       Part="first"
+                       Part="last"
                        Action="set"
                        System="yes" />
         </Component>
       </Feature>
     </Feature>
 
-    <!-- 2. Optional 32-bit (x86) Compatibility Feature on x64 (Configurable Directory) -->
+    <!-- 2. Optional 32-bit Compatibility Feature on x64 -->
     <?if $(sys.BUILDARCH) = "x64" ?>
     <Feature Id="x86CompatRuntime"
              Title="32-bit (x86) Compatibility Runtime"
@@ -121,24 +120,24 @@
              AllowAbsent="yes">
       <Files Include="{{REDIST_DIR}}\x86\**" Directory="INSTALLFOLDER32" />
 
-      <!-- Start Menu Command Prompt Shortcut (32-bit) -->
+      <!-- 32-bit Start Menu Shortcut -->
       <Component Id="X86ShortcutComponent" Guid="B3C4D5E6-F7A8-4901-2345-6789ABCDEF01" Directory="ApplicationProgramsFolder">
         <Shortcut Id="OpenSSL32CommandPrompt"
-                  Name="OpenSSL {{VERSION}} (32-bit) Command Prompt"
-                  Description="Open Command Prompt with 32-bit OpenSSL {{VERSION}} environment"
+                  Name="OpenSSL {{MAJOR_MINOR}} (32-bit) Command Prompt"
+                  Description="OpenSSL {{VERSION}} (32-bit) Command Prompt"
                   Target="[SystemFolder]cmd.exe"
                   Arguments="/K &quot;set PATH=[INSTALLFOLDER32];%PATH% &amp; title OpenSSL {{VERSION}} (32-bit) Environment &amp; echo OpenSSL {{VERSION}} (32-bit) Command Prompt Ready.&quot;"
                   WorkingDirectory="INSTALLFOLDER32"
                   Icon="ProductIcon" />
         <RegistryValue Root="HKCU"
-                       Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}-x86"
+                       Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{MAJOR_MINOR}}-x86"
                        Name="StartMenuShortcut"
                        Type="integer"
                        Value="1"
                        KeyPath="yes" />
       </Component>
 
-      <!-- Sub-Feature: Optional 32-bit PATH environment modification -->
+      <!-- Optional 32-bit PATH sub-feature -->
       <Feature Id="x86PathEnv"
                Title="Add 32-bit directory to PATH"
                Description="Adds the 32-bit OpenSSL installation directory to the system PATH environment variable."
@@ -146,7 +145,7 @@
                AllowAbsent="yes">
         <Component Id="X86PathComponent" Guid="7B58C3F6-4D3E-5F2A-9B0C-1D2E3F4A5B6C" Directory="INSTALLFOLDER32">
           <RegistryValue Root="HKLM"
-                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}-x86"
+                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{MAJOR_MINOR}}-x86"
                          Name="PathSet"
                          Type="integer"
                          Value="1"
@@ -155,7 +154,7 @@
                        Name="PATH"
                        Value="[INSTALLFOLDER32]"
                        Permanent="no"
-                       Part="first"
+                       Part="last"
                        Action="set"
                        System="yes" />
         </Component>
