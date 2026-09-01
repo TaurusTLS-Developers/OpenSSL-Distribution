@@ -1623,7 +1623,7 @@ jobs:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
-      - name: Stage Redistributables
+      - name: Stage Redistributables & Convert LICENSE to RTF
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -1651,7 +1651,7 @@ jobs:
           Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
           Copy-Item "common-assets\LICENSE.rtf" $assetsDir -Force
 
-      - name: Build MSI with WiX
+      - name: Build MSI with WiX v4
         shell: pwsh
         env:
           APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
@@ -1697,32 +1697,7 @@ jobs:
           Write-Host "Compiling MSI: $msiOut"
           wix build $wxsPath -arch $wixArch -ext WixToolset.UI.wixext -o $msiOut
           if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)" }
-
-          # 4. Patch MSI Summary Information Stream (Sets Explorer Title PID_TITLE)
-          $titleString = "OpenSSL $version ($arch) Installer"
-          Write-Host "Patching Windows Explorer Title (PID_TITLE) to '$titleString'..."
-
-          $wsh = $null
-          $database = $null
-          $sumInfo = $null
-          try {
-            $wsh = New-Object -ComObject WindowsInstaller.Installer
-            $database = $wsh.GetType().InvokeMember("OpenDatabase", "InvokeMethod", $null, $wsh, @($msiOut, 1))
-            $sumInfo = $database.GetType().InvokeMember("SummaryInformation", "GetProperty", $null, $database, @(20))
-            
-            # PID 2 = PID_TITLE
-            $sumInfo.GetType().InvokeMember("Property", "SetProperty", $null, $sumInfo, @(2, $titleString))
-            $sumInfo.GetType().InvokeMember("Persist", "InvokeMethod", $null, $sumInfo, $null)
-            Write-Host "✅ MSI Summary Information Stream Title patched successfully!"
-          }
-          finally {
-            if ($sumInfo)  { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sumInfo) | Out-Null }
-            if ($database) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($database) | Out-Null }
-            if ($wsh)      { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null }
-            [System.GC]::Collect()
-          }
-
-          Write-Host "✅ MSI Ready for Signing: $msiOut"
+          Write-Host "✅ MSI Created: $msiOut"
 
       - name: Azure Login
         uses: azure/login@v3
