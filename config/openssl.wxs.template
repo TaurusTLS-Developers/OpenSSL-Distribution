@@ -63,12 +63,18 @@
                Description="Adds the native OpenSSL installation directory to the system PATH environment variable."
                Level="1"
                AllowAbsent="yes">
-        <Component Directory="INSTALLFOLDER">
+        <Component Id="NativePathComponent" Guid="6A47B2E5-3C2D-4E1F-8A9B-0C1D2E3F4A5B" Directory="INSTALLFOLDER">
+          <RegistryValue Root="HKLM"
+                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}"
+                         Name="PathSet"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
           <Environment Id="UpdatePath"
                        Name="PATH"
                        Value="[INSTALLFOLDER]"
                        Permanent="no"
-                       Part="last"
+                       Part="first"
                        Action="set"
                        System="yes" />
         </Component>
@@ -91,12 +97,18 @@
                Description="Adds the 32-bit OpenSSL installation directory to the system PATH environment variable."
                Level="2"
                AllowAbsent="yes">
-        <Component Directory="INSTALLFOLDER32">
+        <Component Id="X86PathComponent" Guid="7B58C3F6-4D3E-5F2A-9B0C-1D2E3F4A5B6C" Directory="INSTALLFOLDER32">
+          <RegistryValue Root="HKLM"
+                         Key="Software\{{APP_PUBLISHER}}\OpenSSL-{{VERSION}}-x86"
+                         Name="PathSet"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
           <Environment Id="UpdatePath32"
                        Name="PATH"
                        Value="[INSTALLFOLDER32]"
                        Permanent="no"
-                       Part="last"
+                       Part="first"
                        Action="set"
                        System="yes" />
         </Component>
