@@ -1648,15 +1648,7 @@ jobs:
             }
           }
 
-          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
-
-          # Convert plain text LICENSE.txt to valid RTF on the fly for WixUI
-          $txt = Get-Content "common-assets\LICENSE.txt"
-          $rtfHeader = "{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Consolas;}}"
-          $rtfBody = ($txt | ForEach-Object { "$_ \par" }) -join "`r`n"
-          $rtf = "$rtfHeader`r`n\viewkind4\uc1\pard\f0\fs18 $rtfBody`r`n}"
-          [IO.File]::WriteAllText("$assetsDir\LICENSE.rtf", $rtf, [Text.UTF8Encoding]::new($false))
-          Write-Host "✅ Generated $assetsDir\LICENSE.rtf from LICENSE.txt"
+          Copy-Item "common-assets\LICENSE.rtf" $redist -ErrorAction SilentlyContinue
 
       - name: Build MSI with WiX v4
         shell: pwsh
