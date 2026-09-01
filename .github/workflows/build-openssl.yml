@@ -163,7 +163,7 @@ jobs:
           make -j$(nproc) install_dev DESTDIR=$PWD/common-assets
           make install_html_docs DESTDIR=$PWD/common-assets || true
           
-          # Include License
+          # Include plain-text License
           cp LICENSE.txt common-assets/usr/local/
           
           # --- Generate README ---
@@ -209,7 +209,113 @@ jobs:
           
           # Remove unnecessary large directories
           rm -rf common-assets/usr/local/lib common-assets/usr/local/lib64 common-assets/usr/local/bin common-assets/usr/local/ssl
-          
+
+      - name: Generate Formatted LICENSE.rtf for WiX MSI
+        shell: pwsh
+        run: |
+          $InputPath  = "common-assets/usr/local/LICENSE.txt"
+          $OutputPath = "common-assets/usr/local/LICENSE.rtf"
+          $ErrorActionPreference = 'Stop'
+
+          try {
+              # Resolve relative paths to absolute paths based on current directory ($PWD)
+              if (-not [System.IO.Path]::IsPathRooted($InputPath)) {
+                  $InputPath = Join-Path $PWD.Path $InputPath
+              }
+              if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
+                  $OutputPath = Join-Path $PWD.Path $OutputPath
+              }
+
+              # 1. Explicitly assert that the input file exists
+              if (-not (Test-Path -Path $InputPath -PathType Leaf)) {
+                  throw "Input license file was not found at path: '$InputPath'"
+              }
+
+              # 2. Read content and verify it is not empty
+              $rawText = [System.IO.File]::ReadAllText($InputPath)
+              if ([string]::IsNullOrWhiteSpace($rawText)) {
+                  throw "Input license file '$InputPath' is empty!"
+              }
+
+              $lines = $rawText -split "`r?`n"
+
+              # 3. Extract the Title block (skipping leading blank lines until the title starts)
+              $titleLines = [System.Collections.Generic.List[string]]::new()
+              $titleStarted = $false
+              $bodyStartIndex = $lines.Length
+
+              for ($i = 0; $i -lt $lines.Length; $i++) {
+                  $trimmed = $lines[$i].Trim()
+                  if (-not $titleStarted) {
+                      if ($trimmed.Length -gt 0) {
+                          $titleStarted = $true
+                          $titleLines.Add($trimmed)
+                      }
+                  } else {
+                      if ($trimmed.Length -eq 0) {
+                          $bodyStartIndex = $i
+                          break
+                      }
+                      $titleLines.Add($trimmed)
+                  }
+              }
+
+              if ($titleLines.Count -eq 0) {
+                  throw "Failed to parse title block: No non-empty lines found in '$InputPath'"
+              }
+
+              # 4. Extract and concatenate subsequent body paragraphs
+              $bodyLines = if ($bodyStartIndex -lt $lines.Length) { $lines[$bodyStartIndex..($lines.Length - 1)] } else { @() }
+              $bodyBlocks = [System.Collections.Generic.List[string]]::new()
+              $currentBlock = [System.Collections.Generic.List[string]]::new()
+
+              foreach ($line in $bodyLines) {
+                  $trimmed = $line.Trim()
+                  if ($trimmed.Length -gt 0) {
+                      $currentBlock.Add($trimmed)
+                  } else {
+                      if ($currentBlock.Count -gt 0) {
+                          $bodyBlocks.Add(($currentBlock -join " "))
+                          $currentBlock.Clear()
+                      }
+                  }
+              }
+              if ($currentBlock.Count -gt 0) {
+                  $bodyBlocks.Add(($currentBlock -join " "))
+              }
+
+              # 5. Build RTF structure with Segoe UI font
+              $rtf = "{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Segoe UI;}}`r`n"
+              
+              # Title: Centered, Bold, preserving line breaks
+              $titleContent = ($titleLines | ForEach-Object { "$_ \line " }) -join ""
+              $titleContent = $titleContent -replace ' \\line $', ''
+              $rtf += "\pard\qc\b\fs22 $titleContent\b0\par\par`r`n"
+
+              # Body Paragraphs
+              foreach ($block in $bodyBlocks) {
+                  if ($block -cmatch '^[A-Z\s,.:\-]+$' -and $block -cmatch '[A-Z]' -and $block.Length -lt 100) {
+                      $rtf += "\pard\qc\b\fs20 $block\b0\par\par`r`n"
+                  } else {
+                      $rtf += "\pard\ql\fs18 $block\par\par`r`n"
+                  }
+              }
+              $rtf += "}"
+
+              # 6. Ensure destination directory exists if output path includes subfolders
+              $outDir = Split-Path -Parent $OutputPath
+              if ($outDir -and -not (Test-Path $outDir)) {
+                  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+              }
+
+              [System.IO.File]::WriteAllText($OutputPath, $rtf, [System.Text.Encoding]::ASCII)
+              Write-Host "✅ Successfully generated formatted RTF: '$OutputPath'"
+          }
+          catch {
+              Write-Error "FATAL: $($_.Exception.Message)"
+              exit 1
+          }
+
       - name: Upload Common Assets
         uses: actions/upload-artifact@v7
         with:
@@ -1457,7 +1563,7 @@ jobs:
           archive: false
           retention-days: 5
   
-# =========================================================================
+  # =========================================================================
   # 3c. BUILD WINDOWS WIX MSI INSTALLERS (Matrix) — Release Builds Only
   # =========================================================================
   wix-windows-installers:

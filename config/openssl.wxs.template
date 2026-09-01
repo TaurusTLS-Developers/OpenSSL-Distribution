@@ -50,8 +50,8 @@
              Title="OpenSSL Native Runtime"
              Description="Installs native {{ARCH}} executables, shared libraries, providers, and engines."
              Level="1"
+             ConfigurableDirectory="INSTALLFOLDER"
              AllowAbsent="no">
-      <!-- Harvests all root files, engines\, and providers\ recursively -->
       <Files Include="{{REDIST_DIR}}\{{ARCH}}\**" Directory="INSTALLFOLDER" />
       <Component Directory="INSTALLFOLDER">
         <File Source="{{REDIST_DIR}}\LICENSE.txt" />
@@ -59,7 +59,7 @@
                      Name="PATH"
                      Value="[INSTALLFOLDER]"
                      Permanent="no"
-                     Part="last"
+                     Part="first"
                      Action="set"
                      System="yes" />
       </Component>
