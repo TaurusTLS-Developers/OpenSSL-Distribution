@@ -1,6 +1,6 @@
 # OpenSSL Distribution Packages & Windows Installers
 
-<Automated, reproducible, and digitally signed OpenSSL 3.x distribution packages, standalone Windows installers, and cross-platform binary archives compiled for Windows, Linux, macOS, Android, and iOS.
+Automated, reproducible, and digitally signed OpenSSL 3.x distribution packages, standalone Windows installers, and cross-platform binary archives compiled for Windows, Linux, macOS, Android, and iOS.
 
 [![GitHub Release](https://img.shields.io/github/v/release/TaurusTLS-Developers/OpenSSL-Distribution?color=blue&label=Latest%20Release)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/TaurusTLS-Developers/OpenSSL-Distribution/total?color=green&label=Downloads)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/releases)
