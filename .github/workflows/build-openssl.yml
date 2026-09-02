@@ -55,6 +55,8 @@ jobs:
       actions: write
     outputs:
       version: ${{ steps.check.outputs.version }}
+      major_minor: ${{ steps.check.outputs.major_minor }}
+      inno_app_id: ${{ steps.check.outputs.inno_app_id }}
       target_repo: ${{ steps.check.outputs.target_repo }}
       ref: ${{ steps.check.outputs.ref }}
       sha: ${{ steps.check.outputs.sha }}
@@ -134,8 +136,16 @@ jobs:
             SAFE_PART=$(echo "$SLUGIFIED_VERSION" | cut -c 1-100)
             ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
           fi
+
+          # Extract Major.Minor (e.g. 3.0, 3.5, 4.0)
+          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+          
+          # Generate deterministic RFC 4122 UUIDv5 for InnoSetup AppId
+          INNO_APP_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, 'taurustls.openssl.inno.$MAJOR_MINOR'))" | tr '[:lower:]' '[:upper:]')
           
           # Output resolved information
+          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
+          echo "inno_app_id=$INNO_APP_ID" >> $GITHUB_OUTPUT
           echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
           echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
           echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
@@ -163,7 +173,7 @@ jobs:
           make -j$(nproc) install_dev DESTDIR=$PWD/common-assets
           make install_html_docs DESTDIR=$PWD/common-assets || true
           
-          # Include License
+          # Include plain-text License
           cp LICENSE.txt common-assets/usr/local/
           
           # --- Generate README ---
@@ -209,7 +219,113 @@ jobs:
           
           # Remove unnecessary large directories
           rm -rf common-assets/usr/local/lib common-assets/usr/local/lib64 common-assets/usr/local/bin common-assets/usr/local/ssl
-          
+
+      - name: Generate Formatted LICENSE.rtf for WiX MSI
+        shell: pwsh
+        run: |
+          $InputPath  = "common-assets/usr/local/LICENSE.txt"
+          $OutputPath = "common-assets/usr/local/LICENSE.rtf"
+          $ErrorActionPreference = 'Stop'
+
+          try {
+              # Resolve relative paths to absolute paths based on current directory ($PWD)
+              if (-not [System.IO.Path]::IsPathRooted($InputPath)) {
+                  $InputPath = Join-Path $PWD.Path $InputPath
+              }
+              if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
+                  $OutputPath = Join-Path $PWD.Path $OutputPath
+              }
+
+              # 1. Explicitly assert that the input file exists
+              if (-not (Test-Path -Path $InputPath -PathType Leaf)) {
+                  throw "Input license file was not found at path: '$InputPath'"
+              }
+
+              # 2. Read content and verify it is not empty
+              $rawText = [System.IO.File]::ReadAllText($InputPath)
+              if ([string]::IsNullOrWhiteSpace($rawText)) {
+                  throw "Input license file '$InputPath' is empty!"
+              }
+
+              $lines = $rawText -split "`r?`n"
+
+              # 3. Extract the Title block (skipping leading blank lines until the title starts)
+              $titleLines = [System.Collections.Generic.List[string]]::new()
+              $titleStarted = $false
+              $bodyStartIndex = $lines.Length
+
+              for ($i = 0; $i -lt $lines.Length; $i++) {
+                  $trimmed = $lines[$i].Trim()
+                  if (-not $titleStarted) {
+                      if ($trimmed.Length -gt 0) {
+                          $titleStarted = $true
+                          $titleLines.Add($trimmed)
+                      }
+                  } else {
+                      if ($trimmed.Length -eq 0) {
+                          $bodyStartIndex = $i
+                          break
+                      }
+                      $titleLines.Add($trimmed)
+                  }
+              }
+
+              if ($titleLines.Count -eq 0) {
+                  throw "Failed to parse title block: No non-empty lines found in '$InputPath'"
+              }
+
+              # 4. Extract and concatenate subsequent body paragraphs
+              $bodyLines = if ($bodyStartIndex -lt $lines.Length) { $lines[$bodyStartIndex..($lines.Length - 1)] } else { @() }
+              $bodyBlocks = [System.Collections.Generic.List[string]]::new()
+              $currentBlock = [System.Collections.Generic.List[string]]::new()
+
+              foreach ($line in $bodyLines) {
+                  $trimmed = $line.Trim()
+                  if ($trimmed.Length -gt 0) {
+                      $currentBlock.Add($trimmed)
+                  } else {
+                      if ($currentBlock.Count -gt 0) {
+                          $bodyBlocks.Add(($currentBlock -join " "))
+                          $currentBlock.Clear()
+                      }
+                  }
+              }
+              if ($currentBlock.Count -gt 0) {
+                  $bodyBlocks.Add(($currentBlock -join " "))
+              }
+
+              # 5. Build RTF structure with Segoe UI font
+              $rtf = "{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Segoe UI;}}`r`n"
+              
+              # Title: Centered, Bold, preserving line breaks
+              $titleContent = ($titleLines | ForEach-Object { "$_ \line " }) -join ""
+              $titleContent = $titleContent -replace ' \\line $', ''
+              $rtf += "\pard\qc\b\fs22 $titleContent\b0\par\par`r`n"
+
+              # Body Paragraphs
+              foreach ($block in $bodyBlocks) {
+                  if ($block -cmatch '^[A-Z\s,.:\-]+$' -and $block -cmatch '[A-Z]' -and $block.Length -lt 100) {
+                      $rtf += "\pard\qc\b\fs20 $block\b0\par\par`r`n"
+                  } else {
+                      $rtf += "\pard\ql\fs18 $block\par\par`r`n"
+                  }
+              }
+              $rtf += "}"
+
+              # 6. Ensure destination directory exists if output path includes subfolders
+              $outDir = Split-Path -Parent $OutputPath
+              if ($outDir -and -not (Test-Path $outDir)) {
+                  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+              }
+
+              [System.IO.File]::WriteAllText($OutputPath, $rtf, [System.Text.Encoding]::ASCII)
+              Write-Host "✅ Successfully generated formatted RTF: '$OutputPath'"
+          }
+          catch {
+              Write-Error "FATAL: $($_.Exception.Message)"
+              exit 1
+          }
+
       - name: Upload Common Assets
         uses: actions/upload-artifact@v7
         with:
@@ -1217,13 +1333,14 @@ jobs:
           APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version   = '${{ needs.validate-version.outputs.version }}'
-          $appId     = 'B3E8F2A1-C4D7-4E9F-B6A2-F7E9D4C7B0A5'
-          $wsDir     = $env:GITHUB_WORKSPACE
-          $redistDir = "$wsDir\redist"
-          $assetsDir = "$wsDir\assets"
-          $pubName   = $env:APP_PUBLISHER
-          $pubUrl    = $env:APP_PUBLISHER_URL
+          $version    = '${{ needs.validate-version.outputs.version }}'
+          $majorMinor = '${{ needs.validate-version.outputs.major_minor }}'
+          $appId      = '${{ needs.validate-version.outputs.inno_app_id }}'
+          $wsDir      = $env:GITHUB_WORKSPACE
+          $redistDir  = "$wsDir\redist"
+          $assetsDir  = "$wsDir\assets"
+          $pubName    = $env:APP_PUBLISHER
+          $pubUrl     = $env:APP_PUBLISHER_URL
 
           New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
 
@@ -1234,6 +1351,7 @@ jobs:
           $iss = Get-Content $templatePath -Raw
           $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
           $iss = $iss.Replace('{{VERSION}}', $version)
+          $iss = $iss.Replace('{{MAJOR_MINOR}}', $majorMinor)
           $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
           $iss = $iss.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
           $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
@@ -1400,6 +1518,7 @@ jobs:
           # Substitute AppxManifest template tokens
           $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
           $xmlPubName   = [System.Security.SecurityElement]::Escape($pubName)
+          $majorMinor   = '${{ needs.validate-version.outputs.major_minor }}'
 
           $templatePath = "$wsDir\config\AppxManifest.xml.template"
           $xml = Get-Content $templatePath -Raw
@@ -1407,6 +1526,7 @@ jobs:
           $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
           $xml = $xml.Replace('{{MSIX_ARCH}}', $msixArch)
           $xml = $xml.Replace('{{VERSION}}', $version)
+          $xml = $xml.Replace('{{MAJOR_MINOR}}', $majorMinor)
           $xml = $xml.Replace('{{ARCH}}', $arch)
           $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $xmlPubName)
 
@@ -1457,6 +1577,188 @@ jobs:
           archive: false
           retention-days: 5
   
+  # =========================================================================
+  # 3c. BUILD WINDOWS WIX MSI INSTALLERS (Matrix) — Release Builds Only
+  # =========================================================================
+  wix-windows-installers:
+    name: Windows MSI (${{ matrix.arch }})
+    needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
+    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   wix_arch: x64,   upgrade_code: "55bf14ca-1e2e-4a0f-8836-e5dbe6275942", pf_folder: "ProgramFiles64Folder" }
+          - { arch: x86,   wix_arch: x86,   upgrade_code: "78bdf7e2-ea72-4928-818a-5314814ce8e6", pf_folder: "ProgramFilesFolder" }
+          - { arch: arm64, wix_arch: arm64, upgrade_code: "1dc9c175-290b-4848-b7de-f5b1bc45a103", pf_folder: "ProgramFiles64Folder" }
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Signing Secrets
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
+          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required secret(s): $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Download x64 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x64-shared-${{ github.run_id }}
+          path: raw-shared-x64
+
+      - name: Download x86 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-x86-shared-${{ github.run_id }}
+          path: raw-shared-x86
+
+      - name: Download ARM64 Shared Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw-Windows-arm64-shared-${{ github.run_id }}
+          path: raw-shared-arm64
+
+      - name: Download Common Assets
+        uses: actions/download-artifact@v8
+        with:
+          name: openssl-common-assets-${{ github.run_id }}
+          path: common-assets
+
+      - name: Stage Redistributables & Convert LICENSE to RTF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wsDir     = $env:GITHUB_WORKSPACE
+          $redist    = "$wsDir\redist"
+          $assetsDir = "$wsDir\assets"
+
+          foreach ($arch in @('x64', 'x86', 'arm64')) {
+            $archDir = "$redist\$arch"
+            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
+            $src = "$wsDir\raw-shared-$arch"
+
+            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
+            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
+            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
+
+            if (Test-Path "$src\providers") {
+              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
+            }
+            if (Test-Path "$src\engines") {
+              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
+            }
+          }
+
+          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
+          Copy-Item "common-assets\LICENSE.rtf" $assetsDir -Force
+
+      - name: Build MSI with WiX
+        shell: pwsh
+        env:
+          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
+          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version     = '${{ needs.validate-version.outputs.version }}'
+          $majorMinor  = '${{ needs.validate-version.outputs.major_minor }}'
+          $arch        = '${{ matrix.arch }}'
+          $wixArch     = '${{ matrix.wix_arch }}'
+          $pfFolder    = '${{ matrix.pf_folder }}'
+          $wsDir       = $env:GITHUB_WORKSPACE
+          $parts       = $version -split '\.'
+          $fourPartVer = "$($parts[0]).$($parts[1]).$($parts[2]).0"
+          $pubName     = $env:APP_PUBLISHER
+          $pubUrl      = $env:APP_PUBLISHER_URL
+
+          # Deterministic UpgradeCode per (Major.Minor + Architecture)
+          $bytes       = [System.Text.Encoding]::UTF8.GetBytes("taurustls.openssl.wix.$majorMinor.$arch")
+          $hash        = [System.Security.Cryptography.MD5]::Create().ComputeHash($bytes)
+          $upgradeCode = [System.Guid]::new($hash).ToString().ToUpper()
+          Write-Host "Resolved UpgradeCode for $majorMinor ($arch): $upgradeCode"
+
+          # 1. Install WiX Toolset v5 via dotnet tool
+          Write-Host "Installing WiX Toolset v5..."
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+
+          # 2. Populate openssl.wxs from template
+          $templatePath = "$wsDir\config\openssl.wxs.template"
+          $wxs = Get-Content $templatePath -Raw
+          $wxs = $wxs.Replace('{{VERSION}}', $version)
+          $wxs = $wxs.Replace('{{VERSION_FOUR_PART}}', $fourPartVer)
+          $wxs = $wxs.Replace('{{MAJOR_MINOR}}', $majorMinor)
+          $wxs = $wxs.Replace('{{ARCH}}', $arch)
+          $wxs = $wxs.Replace('{{UPGRADE_CODE}}', $upgradeCode)
+          $wxs = $wxs.Replace('{{PROGRAM_FILES_FOLDER}}', $pfFolder)
+          $wxs = $wxs.Replace('{{APP_PUBLISHER}}', $pubName)
+          $wxs = $wxs.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
+          $wxs = $wxs.Replace('{{REDIST_DIR}}', "$wsDir\redist")
+          $wxs = $wxs.Replace('{{ASSETS_DIR}}', "$wsDir\assets")
+
+          $wxsPath = "$wsDir\openssl.wxs"
+          [IO.File]::WriteAllText($wxsPath, $wxs, [Text.UTF8Encoding]::new($false))
+
+          # 3. Build MSI
+          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
+          $msiOut = "$wsDir\installers\openssl-$version-Windows-$arch.msi"
+
+          Write-Host "Compiling MSI: $msiOut"
+          wix build $wxsPath -arch $wixArch -ext WixToolset.UI.wixext -o $msiOut
+          if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)" }
+          Write-Host "✅ MSI Created: $msiOut"
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Sign MSI (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\installers
+          files-folder-filter: msi
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signed MSI
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msi
+          if ($files.Count -eq 0) { throw 'No .msi files found to verify.' }
+          foreach ($file in $files) {
+            Write-Host "Verifying $($file.FullName)..."
+            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "  Status:  $($sig.Status)"
+            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "Invalid signature: $($file.Name)" }
+          }
+
+      - name: Upload MSI Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ needs.validate-version.outputs.artifact_version }}-Windows-${{ matrix.arch }}-msi
+          path: ${{ github.workspace }}\installers\openssl-${{ needs.validate-version.outputs.version }}-Windows-${{ matrix.arch }}.msi
+          archive: false
+          retention-days: 5
+
   # =========================================================================
   # 4. PACKAGE RELEASE (Fan-In Matrix)
   # =========================================================================
@@ -1697,7 +1999,7 @@ jobs:
   # =========================================================================
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
-    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers]
+    needs: [package-release, InnoSetup-windows-installer, msix-windows-installers, wix-windows-installers]
     runs-on: ubuntu-latest
     if: |
       always() &&

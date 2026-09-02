@@ -10,7 +10,7 @@ This document provides complete operational, architectural, and configuration do
 3. [Windows ARM64X Dual-Architecture Pipeline](#3-windows-arm64x-dual-architecture-pipeline)
 4. [macOS Universal (Unified) Binary Pipeline](#4-macos-universal-unified-binary-pipeline)
 5. [Azure Trusted Signing (Artifact Signing) Setup](#5-azure-trusted-signing-artifact-signing-setup)
-6. [Windows Installers (InnoSetup & MSIX Frameworks)](#6-windows-installers-innosetup--msix-frameworks)
+6. [Windows Installers (InnoSetup, MSIX & WiX MSI)](#6-windows-installers-innosetup-msix--wix-msi)
 7. [Templates & Visual Branding Assets](#7-templates--visual-branding-assets)
 8. [Repository Configuration: Secrets & Variables](#8-repository-configuration-secrets--variables)
 9. [Release & Publishing Automation](#9-release--publishing-automation)
@@ -29,7 +29,7 @@ The build pipeline (`.github/workflows/build-openssl.yml`) uses a parallelized *
                                        │
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. Build Common Assets (Headers, HTML Docs, License, README)                │
+│ 1. Build Common Assets (Headers, HTML Docs, License.txt & License.rtf)      │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
                                        ▼
@@ -37,29 +37,30 @@ The build pipeline (`.github/workflows/build-openssl.yml`) uses a parallelized *
 │ 2.Compile Binaries (Fan-Out Matrix: Win x64/x86, Linux, macOS, Android, iOS)│
 │    2b. Compile ARM64X Slices (Native ARM64 + ARM64EC parallel compilation)  │
 │    2c. Merge & Sign ARM64X (Fuse static/import libs & link ARM64X DLLs)     │
-└──────────────┬───────────────────────┼───────────────────────┬──────────────┘
-               │                       │                       │
-               ▼                       ▼                       ▼
-┌───────────────────────────┐ ┌─────────────────────────┐ ┌───────────────────┐
-│ 3a. InnoSetup Installer   │ │ 3b. MSIX Frameworks     │ │ 4. Package Release│
-│ Multi-Arch EXE Installer  │ │ x64, x86, ARM64 MSIX    │ │ Fan-In ZIPs + lipo│
-└──────────────┬────────────┘ └────────┬────────────────┘ └────────┬──────────┘
-               │                       │                           │
-               └───────────────────────┼───────────────────────────┘
-                                       ▼
+└──────────────┬───────────────────┬───────────────────┬──────────────┬───────┘
+               │                   │                   │              │
+               ▼                   ▼                   ▼              ▼
+┌───────────────────────┐ ┌─────────────────┐ ┌─────────────┐ ┌───────────────┐
+│ 3a. InnoSetup Setup   │ │ 3b. MSIX Frames │ │ 3c. WiX MSI │ │ 4. Package    │
+│ Multi-Arch EXE Setup  │ │ x64,x86,ARM64   │ │ x64,x86,ARM │ │ ZIPs + lipo   │
+└──────────────┬────────┘ └────────┬────────┘ └───────┬─────┘ └───────┬───────┘
+               │                   │                  │               │
+               └───────────────────┼──────────────────┴───────────────┘
+                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 5. Cleanup Intermediate Artifacts (gh api -X DELETE raw/slice artifacts)    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Stage Summary
-* **Stage 0: Validate Version:** Validates version against OpenSSL releases or Git branch/tag SHAs. Verifies EOL date via `endoflife.date` API.
-* **Stage 1: Build Common Assets:** Compiles C headers (`include/`) and HTML documentation (`doc/`) once on a fast Linux runner.
+* **Stage 0: Validate Version:** Validates version against OpenSSL releases or Git branch/tag SHAs. Verifies EOL date via `endoflife.date` API. Generates deterministic `MAJOR_MINOR` and `INNO_APP_ID` identifiers.
+* **Stage 1: Build Common Assets:** Compiles C headers (`include/`), HTML documentation (`doc/`), `README.txt`, plain-text `LICENSE.txt`, and generates formatted `LICENSE.rtf` once on a fast Linux runner.
 * **Stage 2: Compile Binaries (Fan-Out):** Compiles raw shared and static libraries across Windows (`x64`, `x86`), Linux (`x64`, `arm64`), macOS (`x64`, `arm64`), Android (`arm64`, `arm`), and iOS (`arm64`, `sim-arm64`).
-* **Stage 2b & 2c: Windows ARM64X Pipeline:** Compiles Native `ARM64` and `ARM64EC` slices in parallel, fuses them with `lib.exe /MACHINE:ARM64X` and `link.exe /DLL /MACHINE:ARM64X`, signs them, and validates the `AA64 (ARM64X)` and `DVRT` structures.
+* **Stage 2b & 2c: Windows ARM64X Pipeline:** Compiles Native `ARM64` and `ARM64EC` slices in parallel, fuses them into true `AA64 (ARM64X)` binaries with embedded `DVRT` relocation tables, and signs them.
 * **Stage 3: Windows Installers (Release Builds Only):**
   * `InnoSetup-windows-installer`: Generates a single multi-architecture `.exe` setup package (`x86`, `x64`, `arm64`).
   * `msix-windows-installers`: Generates standalone `.msix` Framework packages for `x64`, `x86`, and `arm64`.
+  * `wix-windows-installers`: Generates enterprise-ready `.msi` Windows Installer packages for `x64`, `x86`, and `arm64` using WiX Toolset v5.
 * **Stage 4: Package Release (Fan-In):** Merges raw binaries with common assets, creates macOS Universal binaries via `lipo`, adds `install_symlinks.sh` for POSIX, and builds distribution `.zip` archives.
 * **Stage 5: Cleanup Artifacts:** Safely deletes intermediate `raw-*`, `slice-*`, and common assets artifacts after all packaging and installer jobs complete.
 
@@ -93,7 +94,7 @@ Windows on ARM supports **ARM64X** binaries—a single PE binary containing both
 1. **Parallel Compilation (`compile-windows-arm64x-slices`):**
    * Compiles **Native ARM64** (`VC-WIN64-ARM`) and **ARM64EC** (`VC-ARM64EC`) slices on separate runners.
    * Both slices are built with `multilib => "-arm64"` so their internal DLL references match (`libcrypto-3-arm64.dll` and `libssl-3-arm64.dll`).
-   * Staged files preserve all `.def`, `.res`, and intermediate `.obj` trees for engines and providers.
+   * Staged files preserve `.def`, `.res`, and all intermediate `.obj` trees for engines and providers.
 2. **Linker Fusion (`merge-windows-arm64x`):**
    * **Static Libraries:** Uses `lib.exe /MACHINE:ARM64X` to merge the static `.lib` archives.
    * **Core DLLs:** Links `libcrypto-3-arm64.dll` and `libssl-3-arm64.dll` using `link.exe /DLL /MACHINE:ARM64X` with both `/DEF:` (for ARM64EC) and `/DEFARM64NATIVE:` (for Native ARM64) to generate dual-mode import thunks in `libcrypto.lib`.
@@ -108,38 +109,6 @@ Windows on ARM supports **ARM64X** binaries—a single PE binary containing both
 ## 4. macOS Universal (Unified) Binary Pipeline
 
 To eliminate ecosystem fragmentation on macOS, our pipeline compiles separate Intel and Apple Silicon builds and fuses them into **Universal (Fat) Mach-O binaries** that work natively across all Macs.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. Compile Slices in Parallel (compile-binaries)                            │
-│    - Slice A (x86_64 Intel): darwin64-x86_64-cc (minos: 10.14)              │
-│    - Slice B (arm64 Apple Silicon): darwin64-arm64-cc (minos: 11.0)         │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. Mach-O Header Rewriting & Relocatability (package-release on macos-14)   │
-│    - install_name_tool -id "@rpath/libname.dylib"                           │
-│    - otool -L dependency mapping -> rewrites to @loader_path/               │
-│    - install_name_tool -add_rpath "@executable_path" / "@loader_path"       │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. Symbol Stripping (strip -x / strip -S)                                   │
-│    - Shared libs & modules: strip -x (removes non-global debugging symbols) │
-│    - Static archives: strip -S (removes debug symbols from .a archives)     │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 4. Universal Binary Fusion (lipo -create)                                   │
-│    - Executable: lipo -create x64/openssl arm64/openssl -output openssl     │
-│    - Shared libs: lipo -create x64/*.dylib arm64/*.dylib -output *.dylib    │
-│    - Static libs: lipo -create x64/lib*.a arm64/lib*.a -output lib/static/  │
-│    - Modules: lipo -create x64/engines/*.dylib arm64/engines/*.dylib        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
 ### The 5 Steps of macOS Packaging:
 
@@ -171,7 +140,7 @@ To ensure archive extraction safety on Windows filesystems, packages contain onl
 
 ## 5. Azure Trusted Signing (Artifact Signing) Setup
 
-All Windows executables (`openssl.exe`), shared libraries (`*.dll`), engines, providers, InnoSetup installers (`.exe`), and MSIX packages (`.msix`) are digitally signed using **Microsoft Azure Trusted Signing** (formerly *Azure Code Signing* / *Artifact Signing*).
+All Windows executables (`openssl.exe`), shared libraries (`*.dll`), engines, providers, InnoSetup installers (`.exe`), MSIX packages (`.msix`), and WiX installers (`.msi`) are digitally signed using **Microsoft Azure Trusted Signing** (formerly *Azure Code Signing* / *Artifact Signing*).
 
 ### Azure Infrastructure Prerequisites
 
@@ -198,37 +167,47 @@ az role assignment create \
 
 ### Signing Action Integration
 In GitHub Actions workflows, signing is executed via `azure/artifact-signing-action@v2`:
-* **Files Filter:** `exe,dll` (for raw binaries) or `exe` / `msix` (for installers).
+* **Files Filter:** `exe,dll` (for raw binaries) or `exe`, `msix`, `msi` (for installers).
 * **Timestamp Server:** `http://timestamp.acs.microsoft.com` (RFC 3161 SHA256).
 * **Verification:** Validated on the runner using PowerShell's `Get-AuthenticodeSignature`.
 
 ---
 
-## 6. Windows Installers (InnoSetup & MSIX Frameworks)
+## 6. Windows Installers (InnoSetup, MSIX & WiX MSI)
 
-During release builds (`build_type == 'release'`), the workflow automatically builds, signs, and publishes two complementary Windows installer formats:
+During release builds (`build_type == 'release'`), the workflow automatically builds, signs, and publishes three distinct Windows installer formats:
 
 ### A. InnoSetup Multi-Architecture Installer (`.exe`)
-A single, unified setup executable (**`openssl-<version>-Windows-installer.exe`**) capable of installing on all Windows platforms:
-* **Runtime Architecture Detection:**
-  * **64-bit Intel/AMD Windows (x64):** Installs native x64 binaries into `bin64`.
-  * **64-bit ARM64 Windows (Surface/Snapdragon):** Installs native ARM64EC binaries into `bin64`.
-  * **32-bit Windows (x86):** Installs native 32-bit binaries into `bin32`.
-* **32-bit Compatibility Option:** On 64-bit systems, users can check `[x] 32-bit (x86) Compatibility Runtime` to install 32-bit libraries into `bin32` alongside 64-bit libraries for legacy application compatibility.
+File pattern: `openssl-<version>-Windows-installer.exe`
+* **Single Binary Setup:** Contains native binaries for `x64`, `x86`, and `arm64`.
+* **Runtime Architecture Detection:** Automatically detects the host CPU and installs native binaries into `bin64` (on 64-bit OS) or `bin32` (on 32-bit OS).
+* **32-bit Compatibility Option:** On 64-bit systems, users can select `[x] 32-bit (x86) Compatibility Runtime` to install 32-bit libraries into `bin32` alongside 64-bit libraries.
 * **Standard Directory Layouts:**
-  * **Per-Machine (Admin / All Users):**
-    * 64-bit: `C:\Program Files\TaurusTLS Developers\OpenSSL-<ver>\bin64\`
-    * 32-bit: `C:\Program Files (x86)\TaurusTLS Developers\OpenSSL-<ver>\bin32\`
-  * **Per-User (Current User / Non-Admin):**
-    * 64-bit: `%LocalAppData%\Programs\TaurusTLS Developers\OpenSSL-<ver>\bin64\`
-    * 32-bit: `%LocalAppData%\Programs\TaurusTLS Developers\OpenSSL-<ver>\bin32\`
-* **Developer Terminal Shortcut:** The Start Menu shortcut opens a dedicated Command Prompt session in the installation directory with the active binary path pre-loaded in local `PATH`.
-* **License Display Page:** Renders `LICENSE.txt` during the setup wizard.
+  * **Per-Machine (Admin):** `C:\Program Files\TaurusTLS Developers\OpenSSL-<major.minor>\bin64\`
+  * **Per-User (Non-Admin):** `%LocalAppData%\Programs\TaurusTLS Developers\OpenSSL-<major.minor>\bin64\`
+* **OpenSSL Command Prompt:** Adds a Start Menu shortcut launching `cmd.exe` directly in the OpenSSL directory with local `PATH` configured.
+* **License Display Page:** Renders `LICENSE.txt` during setup.
 
 ### B. MSIX Framework Packages (`.msix`)
-Published as standalone architecture Framework packages (**`openssl-<version>-Windows-<arch>.msix`** for `x64`, `x86`, `arm64`):
-* Declared with `<Framework>true</Framework>` to act as shared system libraries for other MSIX apps.
-* Windows MSIX architecture guarantees complete directory isolation under `C:\Program Files\WindowsApps\TaurusTLS.OpenSSL_<version>_<arch>__<publisherid>\`.
+File patterns: `openssl-<version>-Windows-<arch>.msix` (`x64`, `x86`, `arm64`)
+* **Framework Package Architecture:** Declared with `<Framework>true</Framework>` to act as shared system libraries for other MSIX apps.
+* **Isolated Deployment:** Deploys side-by-side into `C:\Program Files\WindowsApps\TaurusTLS.OpenSSL.<major.minor>_<version>_<arch>__<id>\`.
+* **Package Dependency:** Consumed by other apps declaring `<PackageDependency Name="TaurusTLS.OpenSSL.3.0" ... />`.
+
+### C. WiX Toolset MSI Packages (`.msi`)
+File patterns: `openssl-<version>-Windows-<arch>.msi` (`x64`, `x86`, `arm64`)
+* **Enterprise Deployment Standard:** Built with WiX Toolset v5 for Active Directory GPO, Microsoft Intune, and SCCM deployment.
+* **Interactive Feature Selection Tree (`WixUI_FeatureTree`):**
+  * 📦 **OpenSSL Native Runtime:** Installs native binaries to `%ProgramFiles%\TaurusTLS Developers\OpenSSL-<major.minor>\`.
+    * └── 📦 **Add native directory to PATH:** Optional sub-feature allowing users to toggle system `PATH` registration.
+  * 📦 **32-bit (x86) Compatibility Runtime (on x64 MSI):** Installs 32-bit binaries to `%ProgramFiles(x86)%\TaurusTLS Developers\OpenSSL-<major.minor>\`.
+    * └── 📦 **Add 32-bit directory to PATH:** Optional sub-feature for 32-bit `PATH` registration.
+* **Custom Directory Browsing:** Features include `ConfigurableDirectory="INSTALLFOLDER"` / `"INSTALLFOLDER32"`, enabling the `Browse...` button.
+* **Deterministic Upgrade Codes:** Computes a deterministic `UpgradeCode` GUID based on `(Major.Minor, Architecture)`. Patches within the same minor release upgrade in-place via `<MajorUpgrade />`, while different minor versions coexist side-by-side.
+* **Silent Execution:**
+  ```cmd
+  msiexec /i openssl-3.4.0-Windows-x64.msi /qn /norestart
+  ```
 
 ---
 
@@ -240,21 +219,26 @@ Configuration templates and visual branding assets are maintained in repository 
 ```text
 .
 ├── assets/
-│   ├── app.ico                    # Multi-size Windows icon (16x16, 32x32, 48x48, 256x256)
-│   ├── WizardSmallImage.bmp       # 55x55 24-bit bitmap for InnoSetup top-right header
-│   ├── openssl-150x150.png        # 150x150 PNG logo for MSIX manifest
-│   ├── openssl-50x50.png          # 50x50 PNG logo for MSIX manifest
-│   └── openssl-44x44.png          # 44x44 PNG logo for MSIX manifest
+│   ├── app.ico                        # Multi-size Windows icon (16x16, 32x32, 48x48, 256x256)
+│   ├── WizardSmallImage.bmp           # 55x55 24-bit bitmap for InnoSetup top-right header
+│   ├── openssl-150x150.png            # 150x150 PNG logo for MSIX manifest
+│   ├── openssl-50x50.png              # 50x50 PNG logo for MSIX manifest
+│   └── openssl-44x44.png              # 44x44 PNG logo for MSIX manifest
 └── config/
-    ├── AppxManifest.xml.template  # MSIX Framework package manifest template
-    └── openssl-installer.iss.template # InnoSetup script template
+    ├── AppxManifest.xml.template      # MSIX Framework package manifest template
+    ├── openssl-installer.iss.template # InnoSetup script template
+    └── openssl.wxs.template           # WiX MSI installer template
 ```
 
 ### Template Placeholders
-Templates use `{{TOKEN}}` placeholders populated by PowerShell during the build:
+Templates use `{{TOKEN}}` placeholders populated dynamically by PowerShell during the build:
 * `{{VERSION}}`: Three-part version string (e.g. `3.4.0`).
-* `{{MSIX_VERSION}}`: Padded four-part version string (e.g. `3.4.0.0`).
+* `{{MAJOR_MINOR}}`: Two-part version string for directory paths and upgrade tracks (e.g. `3.4`).
+* `{{VERSION_FOUR_PART}}` / `{{MSIX_VERSION}}`: Padded four-part version string (e.g. `3.4.0.0`).
 * `{{ARCH}}` / `{{MSIX_ARCH}}`: Architecture string (`x64`, `x86`, `arm64`).
+* `{{APP_ID}}`: Deterministic InnoSetup application GUID per `Major.Minor`.
+* `{{UPGRADE_CODE}}`: Deterministic WiX MSI upgrade GUID per `(Major.Minor, Arch)`.
+* `{{PROGRAM_FILES_FOLDER}}`: Target Program Files root (`ProgramFiles64Folder` vs `ProgramFilesFolder`).
 * `{{APP_PUBLISHER}}` / `{{PUBLISHER_DISPLAY_NAME}}`: Text branding name from Action Variables.
 * `{{APP_PUBLISHER_URL}}`: Website / documentation URL from Action Variables.
 * `{{MSIX_PUBLISHER}}`: Exact Subject DN string from `AZURE_MSIX_PUBLISHER` secret.
@@ -298,10 +282,11 @@ The publishing workflow (`.github/workflows/publish-release.yml`) handles releas
 1. **Trigger:** Fires automatically on `workflow_run` completion of `Build OpenSSL` (or manually via `workflow_dispatch`).
 2. **Safety Gate:** Automated runs on non-main branches or triggered via `workflow_run` force **Draft** release status for maintainer review.
 3. **Artifact Harvesting:** Downloads all release packages matching `openssl-*` without decompressing.
-4. **Publishing Scope:** Attaches all three distribution formats to the GitHub Release via `gh release upload --clobber`:
+4. **Publishing Scope:** Attaches all distribution formats to the GitHub Release via `gh release upload --clobber`:
    * Cross-platform `.zip` archives (`openssl-3.x-<OS>-<Arch>.zip`)
    * Multi-architecture Windows Setup installer (`openssl-3.x-Windows-installer.exe`)
    * Standalone MSIX Framework packages (`openssl-3.x-Windows-<arch>.msix`)
+   * Enterprise WiX MSI installers (`openssl-3.x-Windows-<arch>.msi`)
 5. **Maintainer Notification:** If a Draft release is created, the workflow automatically opens an issue tagging maintainers to review and publish the release.
 
 ---
@@ -313,15 +298,22 @@ The publishing workflow (`.github/workflows/publish-release.yml`) handles releas
 * **Cause 2: Role Propagation Delay:** Azure RBAC assignments take 10–15 minutes to synchronize across Microsoft's signing endpoints. Wait 15 minutes after assigning roles before re-running.
 * **Cause 3: Certificate Profile Inactive:** In Azure Portal, verify that the Certificate Profile status is **`Active`** and identity vetting is complete.
 
-### 2. MakeAppx validation error (`0x80080204`)
-* **Cause 1: Invalid Attribute:** Ensure `AppxManifest.xml` uses `MaxVersionTested="10.0.22621.0"` (never `MaxVersion`).
-* **Cause 2: Capabilities in Framework Package:** Framework packages (`<Framework>true</Framework>`) cannot declare `<Capabilities>` or `<Applications>`.
-* **Cause 3: Publisher Mismatch:** The `Publisher` attribute in `AppxManifest.xml` must match the certificate's Subject string exactly.
+### 2. WiX build fails with `WIX0005: Unexpected child element 'Files'`
+* **Cause:** The workflow is running WiX v4 instead of WiX v5.
+* **Resolution:** Ensure the step installs WiX v5 via `dotnet tool install --global wix --version 5.0.2` and `wix extension add --global WixToolset.UI.wixext/5.0.2`.
 
-### 3. OpenSSL 3.0.x / 3.1.x fails with `disables unknown feature docs`
+### 3. WiX build fails with `WIX0230 / WIX0330` on Component GUIDs
+* **Cause:** Non-file components (like `<Environment>`) cannot auto-generate GUIDs (`*`) without a file keypath.
+* **Resolution:** Ensure non-file components in `openssl.wxs.template` specify explicit `Id`, `Guid`, and `<RegistryValue KeyPath="yes" />`.
+
+### 4. InnoSetup compiler error: `Value of PrivilegesRequiredOverridesAllowed is invalid`
+* **Cause:** InnoSetup list directives must be **space-separated**, not comma-separated.
+* **Resolution:** Ensure `openssl-installer.iss.template` uses `PrivilegesRequiredOverridesAllowed=dialog commandline`.
+
+### 5. OpenSSL 3.0.x / 3.1.x fails with `disables unknown feature docs`
 * **Cause:** The `no-docs` configuration flag was only introduced in OpenSSL 3.2.0.
 * **Resolution:** `build-openssl.yml` dynamically checks `INSTALL.md` for `no-docs` support before injecting `"docs"` into `99-win-hybridcrt.conf`.
 
-### 4. macOS Universal packaging fails during `lipo`
+### 6. macOS Universal packaging fails during `lipo`
 * **Cause:** Missing binaries or architecture mismatch.
 * **Resolution:** Ensure macOS packaging runs strictly on `macos-14` (Apple Silicon) runners so that `lipo`, `otool`, and `install_name_tool` execute natively.
