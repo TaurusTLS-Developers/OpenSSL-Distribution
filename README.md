@@ -237,7 +237,12 @@ This repository automatically checks the [official OpenSSL releases](https://git
 
 ---
 
-## 📄 License
+## 📄 Licensing & Attribution
 
-* **OpenSSL:** Licensed under the [Apache License 2.0](https://github.com/openssl/openssl/blob/master/LICENSE.txt).
-* **Distribution Scripts & Tools:** Licensed under the [MIT License](LICENSE).
+This repository uses a multi-license model to clearly separate upstream OpenSSL software from our automated build and packaging code:
+
+* **OpenSSL Binaries, Headers, and Documentation:** Licensed under the [Apache License 2.0](LICENSE-OPENSSL.txt).
+* **Pipeline Workflows, Build Scripts, and Templates:** Licensed under the [Amended MIT License](LICENSE).
+  * *Free & Open Source Software:* Copyright attribution is completely waived.
+  * *Commercial Usage / Integration:* Copyright notice must be included in distribution copies.
+* **Third-Party Build Tools & Dependencies:** Detailed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
