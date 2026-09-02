@@ -1,29 +1,50 @@
-MIT License (Amended with Commercial Attribution Clause)
+MIT License (Amended — Pipeline, Tooling & Automation Scripts)
 
 Copyright (c) 2026 TaurusTLS Developers
 
+================================================================================
+SCOPE OF LICENSE
+================================================================================
+This license applies STRICTLY AND EXCLUSIVELY to the build scripts, CI/CD
+workflows, GitHub Actions definitions, installer templates (Inno Setup, WiX,
+MSIX), configuration files, architectural designs, and any tooling or materials
+for building OpenSSL binaries authored by TaurusTLS Developers in this
+repository (collectively referred to as the "Automation Software").
+
+EXCLUSION OF UPSTREAM OPENSSL SOFTWARE:
+This license DOES NOT apply to, modify, or govern the upstream OpenSSL source
+code, compiled binaries, shared libraries (.dll, .so, .dylib), static archives
+(.lib, .a), C/C++ header files, or OpenSSL documentation. All OpenSSL software
+and binary assets redistributed by or built with this repository remain
+exclusively governed by the official OpenSSL Apache License 2.0 (see
+LICENSE-OPENSSL.txt).
+
+================================================================================
+TERMS AND CONDITIONS
+================================================================================
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software, scripts, configuration templates, workflows, and associated
-documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to permit persons
-to whom the Software is furnished to do so, subject to the following conditions:
+of the Automation Software, to deal in the Automation Software without
+restriction, including without limitation the rights to use, copy, modify,
+merge, publish, distribute, sublicense, and/or sell copies of the Automation
+Software, and to permit persons to whom the Automation Software is furnished
+to do so, subject to the following conditions:
 
 1. FREE AND OPEN-SOURCE SOFTWARE (FOSS) EXEMPTION:
-   For free, non-commercial, and open-source software projects, reproduction
-   and inclusion of the above copyright notice and this permission notice in
-   copies or substantial portions of the Software are NOT required.
+   For non-commercial, free, and open-source software projects utilizing,
+   adapting, or integrating the Automation Software, reproduction and inclusion
+   of the above copyright notice and this permission notice in copies or
+   substantial portions of the Automation Software are NOT required.
 
 2. COMMERCIAL AND PROPRIETARY USAGE:
-   For any commercial distribution, commercial usage, proprietary integration,
-   or commercial derivative works of the Software, the above copyright notice
-   and this permission notice SHALL be included in all copies or substantial
-   portions of the Software.
+   For any commercial distribution, commercial product integration, proprietary
+   software use, or commercial derivative works of the Automation Software, the
+   above copyright notice and this permission notice SHALL be included in all
+   copies or substantial portions of the Automation Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+THE AUTOMATION SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE AUTOMATION SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE AUTOMATION SOFTWARE.
