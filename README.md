@@ -1,10 +1,27 @@
 # OpenSSL Distribution Packages & Windows Installers
 
-Automated, reproducible, and digitally signed OpenSSL 3.x distribution packages, standalone Windows installers, and cross-platform binary archives compiled for Windows, Linux, macOS, Android, and iOS.
+<Automated, reproducible, and digitally signed OpenSSL 3.x distribution packages, standalone Windows installers, and cross-platform binary archives compiled for Windows, Linux, macOS, Android, and iOS.
 
-[![Build OpenSSL](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/actions/workflows/build-openssl.yml/badge.svg)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/actions/workflows/build-openssl.yml)
-[![Check Upstream](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/actions/workflows/check-upstream.yml/badge.svg)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/actions/workflows/check-upstream.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/TaurusTLS-Developers/OpenSSL-Distribution?color=blue&label=Latest%20Release)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/TaurusTLS-Developers/OpenSSL-Distribution/total?color=green&label=Downloads)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/releases)
+[![Azure Trusted Signing](https://img.shields.io/badge/Code%20Signing-Azure%20Trusted%20Signing-0078D4?logo=microsoftazure)](https://azure.microsoft.com/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/openssl/openssl/blob/master/LICENSE.txt)
+
+[![GitHub Stars](https://img.shields.io/github/stars/TaurusTLS-Developers/OpenSSL-Distribution?style=social)](https://github.com/TaurusTLS-Developers/OpenSSL-Distribution/stargazers) 
+> ⭐ **Love this project?** Give it a star on GitHub! It helps more developers find pre-compiled, signed, and zero-dependency OpenSSL binaries.
+---
+
+## 💡 Why Choose This OpenSSL Distribution?
+
+| Feature | Compiling from Source | Legacy OpenSSL Binaries | **TaurusTLS OpenSSL** |
+| :--- | :---: | :---: | :---: |
+| **No `vcruntime140.dll` Dependency** | ❌ (Requires `/MD` CRT) | ❌ (Causes missing DLL error) | ✅ **HybridCRT (Zero dependencies)** |
+| **Windows ARM64X Dual-Architecture** | ❌ (Complex dual-linking) | ❌ | ✅ **Native ARM64 + ARM64EC in one DLL** |
+| **Microsoft Azure Trusted Signing** | ❌ | ❌ (Triggers SmartScreen) | ✅ **Digitally Signed (`.exe`, `.dll`, `.msi`, `.msix`)** |
+| **Installer Variety** | ❌ | ⚠️ (Single `.exe`) | ✅ **Multi-Arch InnoSetup, WiX MSI & MSIX** |
+| **macOS Universal Binaries** | ❌ (Requires manual `lipo`) | ⚠️ | ✅ **Combined `x86_64` + `arm64` (`@rpath` ready)** |
+| **Android 16K Page Alignment** | ❌ (Defaults to 4KB) | ❌ | ✅ **Android 15+ 16KB Page Aligned** |
+| **Automated Upstream Tracking** | ❌ | ⚠️ (Manual updates) | ✅ **Built within 24h of OpenSSL releases** |
 
 ---
 
