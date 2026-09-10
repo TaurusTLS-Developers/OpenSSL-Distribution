@@ -15,6 +15,7 @@ This document provides complete operational, architectural, and configuration do
 8. [Repository Configuration: Secrets & Variables](#8-repository-configuration-secrets--variables)
 9. [Release & Publishing Automation](#9-release--publishing-automation)
 10. [Troubleshooting & Common Maintenance Scenarios](#10-troubleshooting--common-maintenance-scenarios)
+11. [Decomposed Architecture & Local Execution Guide](#11-decomposed-architecture--local-execution-guide)
 
 ---
 
@@ -317,3 +318,162 @@ The publishing workflow (`.github/workflows/publish-release.yml`) handles releas
 ### 6. macOS Universal packaging fails during `lipo`
 * **Cause:** Missing binaries or architecture mismatch.
 * **Resolution:** Ensure macOS packaging runs strictly on `macos-14` (Apple Silicon) runners so that `lipo`, `otool`, and `install_name_tool` execute natively.
+
+---
+
+## 11. Decomposed Architecture & Local Execution Guide
+
+The build pipeline is designed around a **Separation of Concerns** model:
+* **Orchestrator Workflow (`.github/workflows/build-openssl.yml`)**: Only coordinates the matrix, runners, dependency flow (`needs`), GitHub artifact upload/download actions, environment variable setup, and status evaluation.
+* **Configurations (`config/`)**: OpenSSL target config templates (`99-win-hybridcrt.conf`, `99-arm64x-prep.conf`), distribution package `README.txt`, and installer templates (`openssl-installer.iss.template`, `AppxManifest.xml.template`, `openssl.wxs.template`).
+* **Modular Scripts (`scripts/`)**: Every workflow step is extracted to a standalone script following the `JOB.STEP` naming convention. Reusable logic resides in `scripts/common/`.
+
+### Directory & Script Map
+
+| Script Path | Workflow Job & Step | Description |
+| :--- | :--- | :--- |
+| `scripts/common/init_windows_env.ps1` | Environment | Locates Visual Studio, MSVC Hostx64 tools (`dumpbin`, `lib`, `link`), and `vcvarsall.bat` |
+| `scripts/common/init_posix_env.sh` | Environment | Resolves Linux cross toolchains, Android NDK, and Apple Xcode SDKs |
+| `scripts/common/init_workspace.ps1` | Environment | Sets up standard local directory structure (`raw_artifact/`, `common-assets/`, `redist/`, `dist/`) |
+| `scripts/common/validate_azure_secrets.ps1` | Signing | Validates presence of Azure Trusted Signing secrets (supports local skip) |
+| `scripts/common/check_binaries.ps1` | Signing | Checks folder for `.exe`/`.dll` files and sets `has_binaries` |
+| `scripts/common/verify_signatures.ps1` | Signing | Verifies Authenticode digital signatures via `Get-AuthenticodeSignature` |
+| `scripts/common/stage_windows_redist.ps1` | Installers | Stages multi-arch redistributables into `redist/{x64,x86,arm64}` |
+| `scripts/0_validate-version_2_check_eol.sh` | `validate-version` &bull; Step 2 | Checks release EOL via metadata API or resolves branch/tag SHAs via `git ls-remote` |
+| `scripts/1_build-common-assets_3_build.sh` | `build-common-assets` &bull; Step 3 | Compiles C headers, HTML docs, and stages `LICENSE.txt` and `README.txt` |
+| `scripts/1_build-common-assets_4_generate_license_rtf.ps1` | `build-common-assets` &bull; Step 4 | Converts plain text `LICENSE.txt` to formatted RTF with Segoe UI font |
+| `scripts/2_compile-binaries_3_validate_secrets.ps1` | `compile-binaries` &bull; Step 3 | Validates Azure signing secrets for Windows binary compilation |
+| `scripts/2_compile-binaries_4_prepare_windows_targets.sh` | `compile-binaries` &bull; Step 4 | Injects `config/99-win-hybridcrt.conf` and detects `no-docs` support |
+| `scripts/2_compile-binaries_5_compile_windows.cmd` | `compile-binaries` &bull; Step 5 | Runs MSVC `Configure`, `nmake`, `nmake install_sw`, and stages binaries |
+| `scripts/2_compile-binaries_6_check_binaries.ps1` | `compile-binaries` &bull; Step 6 | Scans `raw_artifact\dist` for `.exe`/`.dll` to sign |
+| `scripts/2_compile-binaries_9_verify_signatures.ps1` | `compile-binaries` &bull; Step 9 | Verifies Authenticode signatures on compiled Windows binaries |
+| `scripts/2_compile-binaries_10_install_linux_deps.sh` | `compile-binaries` &bull; Step 10 | Installs `libsctp-dev` and cross-compilation packages on Linux |
+| `scripts/2_compile-binaries_11_compile_posix.sh` | `compile-binaries` &bull; Step 11 | Compiles OpenSSL for Linux, macOS, Android, and iOS |
+| `scripts/2_compile-binaries_12_organize_posix.sh` | `compile-binaries` &bull; Step 12 | Gathers binaries, strips symbols, and generates `install_symlinks.sh` |
+| `scripts/2b_compile-windows-arm64x-slices_3_prepare_targets.sh` | `compile-windows-arm64x-slices` &bull; Step 3 | Injects `config/99-arm64x-prep.conf` into slice source |
+| `scripts/2b_compile-windows-arm64x-slices_4_compile_slice.cmd` | `compile-windows-arm64x-slices` &bull; Step 4 | Compiles ARM64/ARM64EC slice, preserving `.def` and DSO `.obj` files |
+| `scripts/2c_merge-windows-arm64x_3_fuse.ps1` | `merge-windows-arm64x` &bull; Step 3 | Fuses static `.lib`, links ARM64X core DLLs, provider `legacy.dll`, and engines |
+| `scripts/2c_merge-windows-arm64x_4_verify_arm64x.ps1` | `merge-windows-arm64x` &bull; Step 4 | Recursively validates native ARM64 header and DVRT tables on all DLLs |
+| `scripts/2c_merge-windows-arm64x_5_check_binaries.ps1` | `merge-windows-arm64x` &bull; Step 5 | Scans `raw_shared\dist` for ARM64X binaries to sign |
+| `scripts/2c_merge-windows-arm64x_8_verify_signatures.ps1` | `merge-windows-arm64x` &bull; Step 8 | Verifies Authenticode signatures on ARM64X binaries |
+| `scripts/3a_innosetup-windows-installer_2_validate_secrets.ps1` | `InnoSetup-windows-installer` &bull; Step 2 | Validates Azure signing secrets for InnoSetup installer |
+| `scripts/3a_innosetup-windows-installer_7_stage_redist.ps1` | `InnoSetup-windows-installer` &bull; Step 7 | Stages multi-arch redistributables into `redist/` for InnoSetup |
+| `scripts/3a_innosetup-windows-installer_9_build_installer.ps1` | `InnoSetup-windows-installer` &bull; Step 9 | Populates `.iss` template and runs `ISCC.exe` |
+| `scripts/3a_innosetup-windows-installer_12_verify_signatures.ps1` | `InnoSetup-windows-installer` &bull; Step 12 | Verifies Authenticode signatures on compiled setup `.exe` |
+| `scripts/3b_msix-windows-installers_2_validate_secrets.ps1` | `msix-windows-installers` &bull; Step 2 | Validates Azure signing secrets (including `AZURE_MSIX_PUBLISHER`) |
+| `scripts/3b_msix-windows-installers_5_build_package.ps1` | `msix-windows-installers` &bull; Step 5 | Populates AppxManifest, stages assets, and packs via `MakeAppx.exe` |
+| `scripts/3b_msix-windows-installers_8_verify_signatures.ps1` | `msix-windows-installers` &bull; Step 8 | Verifies Authenticode signatures on `.msix` package |
+| `scripts/3c_wix-windows-installers_2_validate_secrets.ps1` | `wix-windows-installers` &bull; Step 2 | Validates Azure signing secrets for WiX MSI installer |
+| `scripts/3c_wix-windows-installers_7_stage_redist.ps1` | `wix-windows-installers` &bull; Step 7 | Stages multi-arch redistributables and copies `LICENSE.rtf` |
+| `scripts/3c_wix-windows-installers_8_build_msi.ps1` | `wix-windows-installers` &bull; Step 8 | Computes deterministic MD5 UpgradeCode and compiles MSI via WiX v5 |
+| `scripts/3c_wix-windows-installers_11_verify_signatures.ps1` | `wix-windows-installers` &bull; Step 11 | Verifies Authenticode signatures on compiled `.msi` |
+| `scripts/4_package-release_5_merge_binaries.sh` | `package-release` &bull; Step 5 | Merges downloaded raw artifacts into `dist/` |
+| `scripts/4_package-release_6_build_macos_universal.sh` | `package-release` &bull; Step 6 | Rewrites Mach-O headers with `install_name_tool`, strips symbols, and fuses with `lipo` |
+| `scripts/4_package-release_7_finalize_package.sh` | `package-release` &bull; Step 7 | Adds common assets, generates `version.txt`, and produces final `.zip` |
+| `scripts/5_cleanup-artifacts_2_delete_artifacts.sh` | `cleanup-artifacts` &bull; Step 2 | Cleans up intermediate artifacts from current workflow run |
+
+---
+
+### Local Standalone Execution Walkthrough
+
+DevOps engineers can test, debug, and run any stage locally without invoking GitHub Actions.
+
+#### 1. Setup Local Workspace
+```powershell
+# Create standard directories: raw_artifact\, redist\, installers\, dist\, etc.
+pwsh ./scripts/common/init_workspace.ps1
+```
+
+#### 2. Validate a Version Locally
+```bash
+# Release validation
+bash ./scripts/0_validate-version_2_check_eol.sh "3.4.0" "release" "false"
+
+# Branch / Fork validation
+bash ./scripts/0_validate-version_2_check_eol.sh "openssl-3.4" "branch" "false"
+```
+
+#### 3. Build Common Assets Locally (Linux / WSL)
+```bash
+# Requires an OpenSSL checkout in ./openssl-src
+bash ./scripts/1_build-common-assets_3_build.sh "$PWD/openssl-src" "$PWD/common-assets" "$PWD/config"
+
+# Generate formatted RTF for WiX MSI
+pwsh ./scripts/1_build-common-assets_4_generate_license_rtf.ps1 -InputPath common-assets/usr/local/LICENSE.txt -OutputPath common-assets/usr/local/LICENSE.rtf
+```
+
+#### 4. Compile Windows Binaries Locally (CMD / PowerShell)
+```cmd
+:: Prepare target configuration in OpenSSL source
+bash ./scripts/2_compile-binaries_4_prepare_windows_targets.sh "%CD%\openssl-src" "%CD%\config"
+
+:: Compile x64 Shared
+call scripts\2_compile-binaries_5_compile_windows.cmd amd64 VC-WIN64A shared "%CD%\openssl-src" "%CD%\temp_install" "%CD%\raw_artifact\dist"
+
+:: Compile x64 Static
+call scripts\2_compile-binaries_5_compile_windows.cmd amd64 VC-WIN64A static "%CD%\openssl-src" "%CD%\temp_install" "%CD%\raw_artifact\dist"
+```
+
+#### 5. Fuse & Verify ARM64X Dual-Architecture Binaries Locally
+If you have compiled or downloaded the slice directories into `slices/`:
+```powershell
+# 1. Fuse ARM64X binaries (static libs, core DLLs, providers, engines, openssl.exe)
+pwsh ./scripts/2c_merge-windows-arm64x_3_fuse.ps1 `
+  -SlicesDir "$PWD\slices" `
+  -DistSharedDir "$PWD\raw_shared\dist" `
+  -DistStaticDir "$PWD\raw_static\dist"
+
+# 2. Deep verification of AA64 headers and Dynamic Value Relocation Table (DVRT)
+pwsh ./scripts/2c_merge-windows-arm64x_4_verify_arm64x.ps1 -DistDir "$PWD\raw_shared\dist"
+```
+
+#### 6. Build Windows Installers Locally from Downloaded or Local Artifacts
+You can build all three installer types using local binaries:
+```powershell
+# 1. Stage multi-architecture binaries into redist/
+pwsh ./scripts/3a_innosetup-windows-installer_7_stage_redist.ps1 `
+  -WorkspaceDir "$PWD" `
+  -RedistDir "$PWD\redist" `
+  -RawSharedX64Dir "$PWD\binaries\Windows\x64" `
+  -RawSharedX86Dir "$PWD\binaries\Windows\x86" `
+  -RawSharedArm64Dir "$PWD\binaries\Windows\arm64" `
+  -CommonAssetsDir "$PWD\common-assets"
+
+# 2a. Build InnoSetup Multi-Arch Setup EXE
+pwsh ./scripts/3a_innosetup-windows-installer_9_build_installer.ps1 `
+  -Version "3.4.0" `
+  -MajorMinor "3.4" `
+  -InnoAppId "B23E4C4B-073D-5C91-AEFD-ED073C07F818" `
+  -RedistDir "$PWD\redist" `
+  -OutputDir "$PWD\installers"
+
+# 2b. Build WiX MSI Package (e.g. x64)
+pwsh ./scripts/3c_wix-windows-installers_8_build_msi.ps1 `
+  -Version "3.4.0" `
+  -MajorMinor "3.4" `
+  -Arch "x64" `
+  -WixArch "x64" `
+  -PfFolder "ProgramFiles64Folder" `
+  -RedistDir "$PWD\redist" `
+  -OutputDir "$PWD\installers"
+
+# 2c. Build Framework MSIX Package (e.g. x64)
+pwsh ./scripts/3b_msix-windows-installers_5_build_package.ps1 `
+  -Version "3.4.0" `
+  -MajorMinor "3.4" `
+  -Arch "x64" `
+  -MsixArch "x64" `
+  -RawSharedDir "$PWD\binaries\Windows\x64" `
+  -CommonAssetsDir "$PWD\common-assets" `
+  -OutputDir "$PWD\installers"
+```
+
+#### 7. Build macOS Universal Binary Locally (macOS Apple Silicon)
+```bash
+bash ./scripts/4_package-release_6_build_macos_universal.sh "$PWD/raw-binaries" "$PWD/dist"
+```
+
+#### 8. Finalize Cross-Platform Release ZIP Archive Locally
+```bash
+bash ./scripts/4_package-release_7_finalize_package.sh "Windows" "x64" "release" "3.4.0" "3.4.0" "$PWD/common-assets" "$PWD/dist" "$PWD"
+```
