@@ -76,7 +76,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           BUILD_TYPE: ${{ inputs.build_type }}
           IGNORE_EOL: ${{ inputs.ignore_eol }}
-        run: bash ./scripts/0_validate-version_2_check_eol.sh
+        run: bash ./scripts/00_validate_version/01_check_eol.sh
 
   # =========================================================================
   # 1. BUILD COMMON ASSETS (Headers & Docs)
@@ -100,12 +100,12 @@ jobs:
       
       # Step 3: Build Common Assets
       - name: Build Common Assets
-        run: bash ./scripts/1_build-common-assets_3_build.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/01_build_common_assets/01_build_assets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/config"
 
       # Step 4: Generate Formatted LICENSE.rtf for WiX MSI
       - name: Generate Formatted LICENSE.rtf for WiX MSI
         shell: pwsh
-        run: pwsh ./scripts/1_build-common-assets_4_generate_license_rtf.ps1 -InputPath common-assets/usr/local/LICENSE.txt -OutputPath common-assets/usr/local/LICENSE.rtf
+        run: pwsh ./scripts/01_build_common_assets/02_generate_license_rtf.ps1 -InputPath common-assets/usr/local/LICENSE.txt -OutputPath common-assets/usr/local/LICENSE.rtf
 
       # Step 5: Upload Common Assets
       - name: Upload Common Assets
@@ -168,26 +168,26 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
-        run: pwsh ./scripts/2_compile-binaries_3_validate_secrets.ps1
+        run: pwsh ./scripts/02_compile_binaries/01_validate_secrets.ps1
 
       # Step 4: Prepare Windows Targets
       - name: Prepare Windows Targets
         if: matrix.platform.label == 'Windows'
         shell: bash
-        run: bash ./scripts/2_compile-binaries_4_prepare_windows_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/02_compile_binaries/02_prepare_win_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
 
       # Step 5: Compile and Stage Windows Binaries
       - name: Compile and Stage Windows Binaries
         if: matrix.platform.label == 'Windows'
         shell: cmd
-        run: call scripts\2_compile-binaries_5_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\raw_artifact\dist"
+        run: call scripts/02_compile_binaries/03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\raw_artifact\dist"
 
       # Step 6: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
         if: matrix.platform.label == 'Windows'
         id: check_binaries
         shell: pwsh
-        run: pwsh ./scripts/2_compile-binaries_6_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
+        run: pwsh ./scripts/02_compile_binaries/04_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
       # Step 7: Azure Login
       - name: Azure Login
@@ -215,24 +215,24 @@ jobs:
       - name: Verify Signed Windows Binaries
         if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
-        run: pwsh ./scripts/2_compile-binaries_9_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
+        run: pwsh ./scripts/02_compile_binaries/05_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
       # Step 10: Install Linux Dependencies
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
-        run: bash ./scripts/2_compile-binaries_10_install_linux_deps.sh ${{ matrix.platform.arch }}
+        run: bash ./scripts/02_compile_binaries/06_install_linux_deps.sh ${{ matrix.platform.arch }}
 
       # Step 11: Compile Unix (POSIX)
       - name: Compile Unix (POSIX)
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: bash ./scripts/2_compile-binaries_11_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.arch }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ matrix.platform.minos || '' }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/openssl-src"
+        run: bash ./scripts/02_compile_binaries/07_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.arch }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ matrix.platform.minos || '' }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/openssl-src"
 
       # Step 12: Organize Unix Binaries
       - name: Organize Unix Binaries
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: bash ./scripts/2_compile-binaries_12_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist"
+        run: bash ./scripts/02_compile_binaries/08_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist"
 
       # Step 13: Upload Raw Artifact
       - name: Upload Raw Artifact
@@ -272,12 +272,12 @@ jobs:
       # Step 3: Prepare HybridCRT Targets
       - name: Prepare HybridCRT Targets
         shell: bash
-        run: bash ./scripts/2b_compile-windows-arm64x-slices_3_prepare_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/03_compile_arm64x_slices/01_prepare_slice_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
 
       # Step 4: Compile and Stage Slice Binaries
       - name: Compile and Stage Slice Binaries
         shell: cmd
-        run: call scripts\2b_compile-windows-arm64x-slices_4_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\slice_out"
+        run: call scripts/03_compile_arm64x_slices/02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\slice_out"
 
       # Step 5: Upload Slice Artifact
       - name: Upload Slice Artifact
@@ -310,18 +310,18 @@ jobs:
       # Step 3: Fuse ARM64X Binaries and Dynamic Modules
       - name: Fuse ARM64X Binaries and Dynamic Modules
         shell: pwsh
-        run: pwsh ./scripts/2c_merge-windows-arm64x_3_fuse.ps1 -SlicesDir "$env:GITHUB_WORKSPACE\slices" -DistSharedDir "$env:GITHUB_WORKSPACE\raw_shared\dist" -DistStaticDir "$env:GITHUB_WORKSPACE\raw_static\dist" -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/04_merge_arm64x/01_fuse_binaries.ps1 -SlicesDir "$env:GITHUB_WORKSPACE\slices" -DistSharedDir "$env:GITHUB_WORKSPACE\raw_shared\dist" -DistStaticDir "$env:GITHUB_WORKSPACE\raw_static\dist" -WorkspaceDir "$env:GITHUB_WORKSPACE"
 
       # Step 4: Recursive Deep Verification of All ARM64X Binaries
       - name: Recursive Deep Verification of All ARM64X Binaries
         shell: pwsh
-        run: pwsh ./scripts/2c_merge-windows-arm64x_4_verify_arm64x.ps1 -DistDir "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/02_verify_arm64x.ps1 -DistDir "$env:GITHUB_WORKSPACE\raw_shared\dist"
 
       # Step 5: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
         id: check_binaries
         shell: pwsh
-        run: pwsh ./scripts/2c_merge-windows-arm64x_5_check_binaries.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/03_check_binaries.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
 
       # Step 6: Azure Login
       - name: Azure Login
@@ -349,7 +349,7 @@ jobs:
       - name: Verify Signed Windows ARM64X Binaries
         if: steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
-        run: pwsh ./scripts/2c_merge-windows-arm64x_8_verify_signatures.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/04_verify_signatures.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
 
       # Step 9: Upload Raw ARM64 Shared Artifact
       - name: Upload Raw ARM64 Shared Artifact
@@ -393,7 +393,7 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
-        run: pwsh ./scripts/3a_innosetup-windows-installer_2_validate_secrets.ps1
+        run: pwsh ./scripts/05_innosetup_installer/01_validate_secrets.ps1
 
       # Step 3: Download x64 Shared Artifact
       - name: Download x64 Shared Artifact
@@ -426,7 +426,7 @@ jobs:
       # Step 7: Stage Multi-Arch Redistributables
       - name: Stage Multi-Arch Redistributables
         shell: pwsh
-        run: pwsh ./scripts/3a_innosetup-windows-installer_7_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/05_innosetup_installer/02_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
 
       # Step 8: Install InnoSetup
       - name: Install InnoSetup
@@ -439,7 +439,7 @@ jobs:
       - name: Generate and Compile Multi-Arch Installer
         shell: pwsh
         run: |
-          pwsh ./scripts/3a_innosetup-windows-installer_9_build_installer.ps1 `
+          pwsh ./scripts/05_innosetup_installer/03_build_installer.ps1 `
             -Version "${{ needs.validate-version.outputs.version }}" `
             -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
             -InnoAppId "${{ needs.validate-version.outputs.inno_app_id }}" `
@@ -469,7 +469,7 @@ jobs:
       # Step 12: Verify Signed Installer
       - name: Verify Signed Installer
         shell: pwsh
-        run: pwsh ./scripts/3a_innosetup-windows-installer_12_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
+        run: pwsh ./scripts/05_innosetup_installer/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
       # Step 13: Upload Multi-Arch Installer
       - name: Upload Multi-Arch Installer
@@ -514,7 +514,7 @@ jobs:
           AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           AZURE_MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
-        run: pwsh ./scripts/3b_msix-windows-installers_2_validate_secrets.ps1
+        run: pwsh ./scripts/06_msix_installers/01_validate_secrets.ps1
 
       # Step 3: Download Shared Artifact
       - name: Download Shared Artifact
@@ -534,7 +534,7 @@ jobs:
       - name: Build Framework MSIX Package
         shell: powershell
         run: |
-          pwsh ./scripts/3b_msix-windows-installers_5_build_package.ps1 `
+          pwsh ./scripts/06_msix_installers/02_build_package.ps1 `
             -Version "${{ needs.validate-version.outputs.version }}" `
             -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
             -Arch "${{ matrix.arch }}" `
@@ -565,7 +565,7 @@ jobs:
       # Step 8: Verify Signed MSIX Package
       - name: Verify Signed MSIX Package
         shell: pwsh
-        run: pwsh ./scripts/3b_msix-windows-installers_8_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
+        run: pwsh ./scripts/06_msix_installers/03_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
       # Step 9: Upload MSIX Framework Artifact
       - name: Upload MSIX Framework Artifact
@@ -609,7 +609,7 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
-        run: pwsh ./scripts/3c_wix-windows-installers_2_validate_secrets.ps1
+        run: pwsh ./scripts/07_wix_installers/01_validate_secrets.ps1
 
       # Step 3: Download x64 Shared Artifact
       - name: Download x64 Shared Artifact
@@ -642,13 +642,13 @@ jobs:
       # Step 7: Stage Redistributables & Convert LICENSE to RTF
       - name: Stage Redistributables & Convert LICENSE to RTF
         shell: pwsh
-        run: pwsh ./scripts/3c_wix-windows-installers_7_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/07_wix_installers/02_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
 
       # Step 8: Build MSI with WiX
       - name: Build MSI with WiX
         shell: pwsh
         run: |
-          pwsh ./scripts/3c_wix-windows-installers_8_build_msi.ps1 `
+          pwsh ./scripts/07_wix_installers/03_build_msi.ps1 `
             -Version "${{ needs.validate-version.outputs.version }}" `
             -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
             -Arch "${{ matrix.arch }}" `
@@ -680,7 +680,7 @@ jobs:
       # Step 11: Verify Signed MSI
       - name: Verify Signed MSI
         shell: pwsh
-        run: pwsh ./scripts/3c_wix-windows-installers_11_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
+        run: pwsh ./scripts/07_wix_installers/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
       # Step 12: Upload MSI Artifact
       - name: Upload MSI Artifact
@@ -747,18 +747,18 @@ jobs:
       - name: Merge Binaries and Assets
         if: matrix.label != 'macOS'
         shell: bash
-        run: bash ./scripts/4_package-release_5_merge_binaries.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
+        run: bash ./scripts/08_package_release/01_merge_binaries.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
 
       # Step 6: Organize & Lipo (macOS Universal)
       - name: Organize & Lipo (macOS Universal)
         if: matrix.label == 'macOS'
         shell: bash
-        run: bash ./scripts/4_package-release_6_build_macos_universal.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
+        run: bash ./scripts/08_package_release/02_build_macos_universal.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
 
       # Step 7: Finalize Package
       - name: Finalize Package
         shell: bash
-        run: bash ./scripts/4_package-release_7_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE"
+        run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE"
 
       # Step 8: Upload Final Archive
       - name: Upload Final Archive
@@ -801,4 +801,4 @@ jobs:
       - name: Delete Intermediate Artifacts (raw, slice, common-assets)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash ./scripts/5_cleanup-artifacts_2_delete_artifacts.sh "${{ github.repository }}" "${{ github.run_id }}"
+        run: bash ./scripts/09_cleanup_artifacts/01_delete_artifacts.sh "${{ github.repository }}" "${{ github.run_id }}"
