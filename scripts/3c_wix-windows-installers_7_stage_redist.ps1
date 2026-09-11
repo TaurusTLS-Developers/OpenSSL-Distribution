@@ -33,4 +33,9 @@ $stageParams = @{
 }
 & "$scriptDir\common\stage_windows_redist.ps1" @stageParams
 
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# If an external EXE failed OR a PowerShell command failed
+if ($LASTEXITCODE -ne 0 -or -not $?) {
+    # If LASTEXITCODE is 0 but it still failed (PowerShell error), force exit code 1
+    $exitCode = if ($LASTEXITCODE -ne 0) { $LASTEXITCODE } else { 1 }
+    exit $exitCode
+}
