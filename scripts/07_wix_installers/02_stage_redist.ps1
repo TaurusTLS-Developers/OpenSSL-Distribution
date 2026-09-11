@@ -31,7 +31,11 @@ $stageParams = @{
     CommonAssetsDir   = $CommonAssetsDir
     AssetsDir         = $AssetsDir
 }
-& "$scriptDir\common\stage_windows_redist.ps1" @stageParams
+$commonScript = Join-Path (Split-Path -Parent $PSScriptRoot) "common\stage_windows_redist.ps1"
+if (-not (Test-Path $commonScript)) {
+    throw "FATAL: Shared helper script not found at: $commonScript"
+}
+& $commonScript @stageParams
 
 # If an external EXE failed OR a PowerShell command failed
 if ($LASTEXITCODE -ne 0 -or -not $?) {
