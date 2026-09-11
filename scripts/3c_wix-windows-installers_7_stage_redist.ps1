@@ -21,11 +21,16 @@ if (-not $RawSharedArm64Dir) { $RawSharedArm64Dir = Join-Path $ws "raw-shared-ar
 if (-not $CommonAssetsDir)   { $CommonAssetsDir   = Join-Path $ws "common-assets" }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& "$scriptDir\common\stage_windows_redist.ps1" `
-    -RedistDir $RedistDir `
-    -RawSharedX64Dir $RawSharedX64Dir `
-    -RawSharedX86Dir $RawSharedX86Dir `
-    -RawSharedArm64Dir $RawSharedArm64Dir `
-    -CommonAssetsDir $CommonAssetsDir `
-    -AssetsDir $AssetsDir
+
+# To avoid invalid interpretation of backticks with Splatting
+$stageParams = @{
+    RedistDir         = $RedistDir
+    RawSharedX64Dir   = $RawSharedX64Dir
+    RawSharedX86Dir   = $RawSharedX86Dir
+    RawSharedArm64Dir = $RawSharedArm64Dir
+    CommonAssetsDir   = $CommonAssetsDir
+    AssetsDir         = $AssetsDir
+}
+& "$scriptDir\common\stage_windows_redist.ps1" @stageParams
+
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
