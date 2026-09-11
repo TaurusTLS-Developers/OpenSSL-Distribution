@@ -61,11 +61,20 @@ foreach ($arch in @('x64', 'x86', 'arm64')) {
 
 if (Test-Path "$CommonAssetsDir\LICENSE.txt") {
     Copy-Item "$CommonAssetsDir\LICENSE.txt" $RedistDir -Force
+} else {
+    Write-Warning "[STAGE-REDIST] LICENSE.txt not found at '$CommonAssetsDir\LICENSE.txt'"
 }
 
-if (Test-Path "$CommonAssetsDir\LICENSE.rtf" -and $AssetsDir -ne "") {
+# LICENSE.rtf is required by WiX MSI — fail explicitly if missing
+if (($AssetsDir) -ne "") {
     New-Item -ItemType Directory -Force -Path $AssetsDir | Out-Null
-    Copy-Item "$CommonAssetsDir\LICENSE.rtf" $AssetsDir -Force
+    $rtfSrc = Join-Path $CommonAssetsDir "LICENSE.rtf"
+    if (-not (Test-Path $rtfSrc)) {
+        Write-Error "[STAGE-REDIST] LICENSE.rtf not found at '$rtfSrc'. Ensure the build-common-assets job generated and uploaded it."
+        exit 1
+    }
+    Copy-Item $rtfSrc (Join-Path $AssetsDir "LICENSE.rtf") -Force
+    Write-Host "[STAGE-REDIST] Copied LICENSE.rtf -> $AssetsDir"
 }
 
 Write-Host "[STAGE-REDIST] ✅ Multi-architecture redistributables successfully staged."
