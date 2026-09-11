@@ -6,6 +6,14 @@
 param(
     [string]$Folder = "$PWD\installers"
 )
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe") -Recurse:$false
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$ErrorActionPreference = 'Stop'
+
+try {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    & "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe") -Recurse:$false
+}
+catch {
+    Write-Error "Failed to verify signed installer: $($_.Exception.Message)"
+    exit 1
+}

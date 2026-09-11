@@ -6,6 +6,14 @@
 param(
     [switch]$AllowMissingIfLocal
 )
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& "$scriptDir\common\validate_azure_secrets.ps1" -AllowMissingIfLocal:$AllowMissingIfLocal
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$ErrorActionPreference = 'Stop'
+
+try {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    & "$scriptDir\common\validate_azure_secrets.ps1" -AllowMissingIfLocal:$AllowMissingIfLocal
+}
+catch {
+    Write-Error "Azure Signiture secrets validation failed: $($_.Exception.Message)"
+    exit 1
+}

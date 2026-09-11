@@ -6,6 +6,14 @@
 param(
     [string]$Folder = "$PWD\raw_shared\dist"
 )
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe", "*.dll") -Recurse
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$ErrorActionPreference = 'Stop'
+
+try {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCo  mmand.Path
+    & "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe", "*.dll") -Recurse
+}
+catch {
+    Write-Error "Failed to verify signed Windows ARM64X binaries: $($_.Exception.Message)"
+    exit 1
+}

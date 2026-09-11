@@ -12,6 +12,9 @@ param(
     [string]$RawSharedArm64Dir,
     [string]$CommonAssetsDir
 )
+
+$ErrorActionPreference = 'Stop'
+
 $ws = if ($WorkspaceDir) { $WorkspaceDir } elseif ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { $PWD.Path }
 if (-not $RedistDir)         { $RedistDir         = Join-Path $ws "redist" }
 if (-not $AssetsDir)         { $AssetsDir         = Join-Path $ws "assets" }
@@ -20,9 +23,6 @@ if (-not $RawSharedX86Dir)   { $RawSharedX86Dir   = Join-Path $ws "raw-shared-x8
 if (-not $RawSharedArm64Dir) { $RawSharedArm64Dir = Join-Path $ws "raw-shared-arm64" }
 if (-not $CommonAssetsDir)   { $CommonAssetsDir   = Join-Path $ws "common-assets" }
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-# To avoid invalid interpretation of backticks with Splatting
 $stageParams = @{
     RedistDir         = $RedistDir
     RawSharedX64Dir   = $RawSharedX64Dir
@@ -31,15 +31,18 @@ $stageParams = @{
     CommonAssetsDir   = $CommonAssetsDir
     AssetsDir         = $AssetsDir
 }
-$commonScript = Join-Path (Split-Path -Parent $PSScriptRoot) "common\stage_windows_redist.ps1"
-if (-not (Test-Path $commonScript)) {
-    throw "FATAL: Shared helper script not found at: $commonScript"
-}
-& $commonScript @stageParams
 
-# If an external EXE failed OR a PowerShell command failed
-if ($LASTEXITCODE -ne 0 -or -not $?) {
-    # If LASTEXITCODE is 0 but it still failed (PowerShell error), force exit code 1
-    $exitCode = if ($LASTEXITCODE -ne 0) { $LASTEXITCODE } else { 1 }
-    exit $exitCode
+$ErrorActionPreference = 'Stop'
+
+try {
+
+$commonScript = Join-Path (Split-Path -Parent $PSScriptRoot) "common\stage_windows_redist.ps1"
+    if (-not (Test-Path $commonScript)) {
+        throw "FATAL: Shared helper script not found at: $commonScript"
+    }
+    & $commonScript @stageParams
+}
+catch {
+    Write-Error "Failed to stage redistributables: $($_.Exception.Message)"
+    exit 1
 }
