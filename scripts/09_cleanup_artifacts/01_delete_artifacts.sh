@@ -1,33 +1,73 @@
 #!/usr/bin/env bash
-# =============================================================================
-# scripts/5_cleanup-artifacts_2_delete_artifacts.sh
-# Job: 5_cleanup-artifacts | Step: 2 (Delete Intermediate Artifacts)
-# Safely removes intermediate raw, slice, and common assets artifacts from GitHub Actions run.
-# =============================================================================
 set -euo pipefail
 
-REPO="${1:-${GITHUB_REPOSITORY:-}}"
-RUN_ID="${2:-${GITHUB_RUN_ID:-}}"
+# =========================================================================
+# Script: 01_delete_artifacts.sh
+# Job:    09_cleanup_artifacts
+# Desc:   Deletes intermediate raw-* and slice-* artifacts for a specific
+#         workflow run using the GitHub CLI (gh api).
+# =========================================================================
 
-if [ -z "$REPO" ] || [ -z "$RUN_ID" ]; then
-  echo "ERROR: GITHUB_REPOSITORY and GITHUB_RUN_ID are required for artifact cleanup." >&2
-  exit 1
+RUN_ID="${1:-${RUN_ID:-${GITHUB_RUN_ID:-}}}"
+REPO="${2:-${REPO:-${GITHUB_REPOSITORY:-}}}"
+
+echo "================================================================"
+echo " [CLEANUP-ARTIFACTS] Target Run ID:    ${RUN_ID:-<Not Provided>}"
+echo " [CLEANUP-ARTIFACTS] Repository:       ${REPO:-<Not Provided>}"
+echo "================================================================"
+
+# 1. Local execution and environment guard
+if [ -z "$RUN_ID" ] || [ -z "$REPO" ]; then
+    echo "ℹ️ Notice: RUN_ID or REPOSITORY not specified. Skipping artifact cleanup (likely running locally)."
+    exit 0
 fi
 
-echo "[CLEANUP] Fetching intermediate artifacts for $REPO run $RUN_ID..."
+if ! command -v gh >/dev/null 2>&1; then
+    echo "⚠️ Warning: GitHub CLI ('gh') is not installed. Skipping artifact deletion."
+    exit 0
+fi
 
-ARTIFACTS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --paginate)
+if ! command -v jq >/dev/null 2>&1; then
+    echo "FATAL: 'jq' utility is required for JSON artifact parsing but was not found!"
+    exit 1
+fi
 
-IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | ((startswith(\"raw-\") or startswith(\"slice-\")) and endswith(\"-$RUN_ID\")) or . == \"openssl-common-assets-$RUN_ID\") | .id")
+if [ -z "${GH_TOKEN:-}" ]; then
+    echo "⚠️ Warning: GH_TOKEN is not set. Skipping artifact deletion."
+    exit 0
+fi
+
+echo "🔍 Fetching artifact list for workflow run $RUN_ID..."
+ARTIFACTS_JSON=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --paginate 2>/dev/null || echo "{}")
+
+# 2. Extract IDs of intermediate artifacts matching:
+#    - 'raw-*-<RUN_ID>'
+#    - 'slice-*-<RUN_ID>'
+#    - 'openssl-common-assets-<RUN_ID>'
+IDS=$(echo "$ARTIFACTS_JSON" | jq -r '
+  .artifacts[]? |
+  select(
+    ((.name | startswith("raw-") or startswith("slice-")) and (.name | endswith("-'$RUN_ID'"))) or
+    (.name == "openssl-common-assets-'$RUN_ID'")
+  ) | .id' 2>/dev/null || echo "")
 
 if [ -z "$IDS" ] || [ "$IDS" == "null" ]; then
-  echo "[CLEANUP] No intermediate artifacts found to delete."
-  exit 0
+    echo "ℹ️ No intermediate artifacts found for deletion (all clean)."
+    exit 0
 fi
 
+TOTAL_COUNT=$(echo "$IDS" | wc -w)
+echo "🗑️ Found $TOTAL_COUNT intermediate artifact(s) to delete."
+
+DELETED_COUNT=0
 for id in $IDS; do
-  echo "[CLEANUP] Deleting intermediate artifact ID: $id"
-  gh api -X DELETE "repos/$REPO/actions/artifacts/$id" || echo "[CLEANUP] Failed to delete artifact ID: $id" ; true
+    echo "  [-] Deleting artifact ID: $id"
+    if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
+        DELETED_COUNT=$((DELETED_COUNT + 1))
+    else
+        echo "  ⚠️ Warning: Failed to delete artifact ID: $id (continuing)"
+    fi
 done
 
-echo "[CLEANUP] ✅ Intermediate artifact cleanup completed."
+echo "✅ Cleanup complete. Successfully deleted $DELETED_COUNT of $TOTAL_COUNT intermediate artifact(s)."
+exit 0

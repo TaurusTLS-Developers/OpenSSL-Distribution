@@ -1,33 +1,59 @@
 #!/usr/bin/env bash
-# =============================================================================
-# scripts/2b_compile-windows-arm64x-slices_3_prepare_targets.sh
-# Job: 2b_compile-windows-arm64x-slices | Step: 3 (Prepare HybridCRT Targets)
-# Injects ARM64X slice configuration and checks for no-docs support.
-# =============================================================================
 set -euo pipefail
 
-OPENSSL_SRC_DIR="${1:-${OPENSSL_SRC_DIR:-$PWD/openssl-src}}"
-CONFIG_DIR="${2:-${CONFIG_DIR:-$PWD/config}}"
+# =========================================================================
+# Script: 01_prepare_slice_targets.sh
+# Job:    03_compile_arm64x_slices
+# Desc:   Copies config/99-arm64x-prep.conf into openssl-src/Configurations/
+#         and resolves the __DOCS__ placeholder based on OpenSSL version.
+# =========================================================================
 
-echo "[PREPARE-ARM64X] Preparing ARM64X slice configuration..."
-echo "  OpenSSL Source: $OPENSSL_SRC_DIR"
-echo "  Config Dir    : $CONFIG_DIR"
-
-if [ ! -d "$OPENSSL_SRC_DIR/Configurations" ]; then
-  echo "ERROR: Configurations folder not found in '$OPENSSL_SRC_DIR'" >&2
-  exit 1
+WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
+DEFAULT_SRC="$WS_DIR/openssl-src"
+if [ ! -d "$DEFAULT_SRC" ]; then
+    DEFAULT_SRC="$WS_DIR"
 fi
 
-cp "$CONFIG_DIR/99-arm64x-prep.conf" "$OPENSSL_SRC_DIR/Configurations/99-arm64x-prep.conf"
+SRC_DIR="${1:-${SRC_DIR:-$DEFAULT_SRC}}"
+CFG_DIR="${2:-${CONFIG_DIR:-$WS_DIR/config}}"
 
-cd "$OPENSSL_SRC_DIR"
+SRC_CONF="$CFG_DIR/99-arm64x-prep.conf"
+DEST_CONF="$SRC_DIR/Configurations/99-arm64x-prep.conf"
 
-if grep -q "no-docs" INSTALL.md 2>/dev/null; then
-  echo "[PREPARE-ARM64X] Feature 'docs' supported. Disabling it in config."
-  sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-arm64x-prep.conf
+echo "================================================================"
+echo " [PREPARE-SLICE-TARGETS] Template:        $SRC_CONF"
+echo " [PREPARE-SLICE-TARGETS] OpenSSL Source:  $SRC_DIR"
+echo " [PREPARE-SLICE-TARGETS] Output Target:   $DEST_CONF"
+echo "================================================================"
+
+if [ ! -f "$SRC_CONF" ]; then
+    echo "FATAL: Template config not found at '$SRC_CONF'!"
+    exit 1
+fi
+
+if [ ! -d "$SRC_DIR/Configurations" ]; then
+    echo "FATAL: OpenSSL Configurations directory not found at '$SRC_DIR/Configurations'!"
+    exit 1
+fi
+
+# 1. Copy committed config from config/
+cp -f "$SRC_CONF" "$DEST_CONF"
+
+# 2. Dynamically check if 'no-docs' is supported by this OpenSSL version
+INSTALL_DOC="$SRC_DIR/INSTALL.md"
+if [ -f "$INSTALL_DOC" ] && grep -q "no-docs" "$INSTALL_DOC"; then
+    echo "  [+] Feature 'docs' is supported. Disabling it in config."
+    sed -i 's/"__DOCS__"/"docs"/g' "$DEST_CONF"
 else
-  echo "[PREPARE-ARM64X] Feature 'docs' not supported. Removing from config."
-  sed -i 's/"__DOCS__"//g' Configurations/99-arm64x-prep.conf
+    echo "  [+] Feature 'docs' not supported in this version. Removing placeholder."
+    sed -i 's/"__DOCS__"//g' "$DEST_CONF"
 fi
 
-echo "[PREPARE-ARM64X] ✅ Configurations/99-arm64x-prep.conf successfully prepared."
+# 3. Final validation
+if [ ! -s "$DEST_CONF" ]; then
+    echo "FATAL: Destination config '$DEST_CONF' is missing or empty!"
+    exit 1
+fi
+
+echo "✅ Successfully deployed 99-arm64x-prep.conf from config/."
+exit 0

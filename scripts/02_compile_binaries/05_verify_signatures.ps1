@@ -4,16 +4,15 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Folder = "$PWD\raw_artifact\dist"
+    [string]$Folder = ($env:DIST_SHARED ?? (Join-Path ($env:GITHUB_WORKSPACE ?? $PWD.Path) "raw_artifact\dist"))
 )
 
 $ErrorActionPreference = 'Stop'
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    & "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe", "*.dll") -Recurse
+    & "$env:COMMON_SCRIPTS_DIR\verify_signatures.ps1" -Folder $Folder -Filter @("*.exe", "*.dll") -Recurse:$true
 }
 catch {
-    Write-Error "Failed to verify signed Windows binaries: $($_.Exception.Message)"
+    Write-Error "Failed to verify signed binaries: $($_.Exception.Message)"
     exit 1
 }

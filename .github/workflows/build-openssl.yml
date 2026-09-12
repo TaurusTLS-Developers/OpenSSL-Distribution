@@ -44,6 +44,15 @@ on:
         type: boolean
         default: false
 
+env:
+  SCRIPTS_DIR: ${{ github.workspace }}/scripts
+  COMMON_SCRIPTS_DIR: ${{ github.workspace }}/scripts/common
+  CONFIG_DIR: ${{ github.workspace }}/config
+  ASSETS_DIR: ${{ github.workspace }}/assets
+  REDIST_DIR: ${{ github.workspace }}/redist
+  INSTALLERS_DIR: ${{ github.workspace }}/installers
+  COMMON_ASSETS_DIR: ${{ github.workspace }}/common-assets
+
 jobs:
   # =========================================================================
   # 0. VALIDATE VERSION & EOL
@@ -73,10 +82,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-          BUILD_TYPE: ${{ inputs.build_type }}
-          IGNORE_EOL: ${{ inputs.ignore_eol }}
-        run: bash ./scripts/00_validate_version/01_check_eol.sh
+        run: bash ./scripts/00_validate_version/01_check_eol.sh "${{ inputs.version }}" "${{ inputs.build_type }}" "${{ inputs.ignore_eol }}"
 
   # =========================================================================
   # 1. BUILD COMMON ASSETS (Headers & Docs)
@@ -100,12 +106,12 @@ jobs:
       
       # Step 3: Build Common Assets
       - name: Build Common Assets
-        run: bash ./scripts/01_build_common_assets/01_build_assets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/01_build_common_assets/01_build_assets.sh "${{ github.workspace }}/openssl-src" "${{ github.workspace }}/common-assets"
 
       # Step 4: Generate Formatted LICENSE.rtf for WiX MSI
       - name: Generate Formatted LICENSE.rtf for WiX MSI
         shell: pwsh
-        run: pwsh ./scripts/01_build_common_assets/02_generate_license_rtf.ps1 -InputPath common-assets/usr/local/LICENSE.txt -OutputPath common-assets/usr/local/LICENSE.rtf
+        run: pwsh ./scripts/01_build_common_assets/02_generate_license_rtf.ps1
 
       # Step 5: Upload Common Assets
       - name: Upload Common Assets
@@ -174,13 +180,13 @@ jobs:
       - name: Prepare Windows Targets
         if: matrix.platform.label == 'Windows'
         shell: bash
-        run: bash ./scripts/02_compile_binaries/02_prepare_win_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/02_compile_binaries/02_prepare_win_targets.sh "${{ github.workspace }}/openssl-src"
 
       # Step 5: Compile and Stage Windows Binaries
       - name: Compile and Stage Windows Binaries
         if: matrix.platform.label == 'Windows'
         shell: cmd
-        run: call scripts/02_compile_binaries/03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\raw_artifact\dist"
+        run: call scripts\02_compile_binaries\03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\raw_artifact\dist"
 
       # Step 6: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
@@ -220,13 +226,13 @@ jobs:
       # Step 10: Install Linux Dependencies
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
-        run: bash ./scripts/02_compile_binaries/06_install_linux_deps.sh ${{ matrix.platform.arch }}
+        run: bash ./scripts/02_compile_binaries/06_install_linux_deps.sh "${{ matrix.platform.arch }}"
 
       # Step 11: Compile Unix (POSIX)
       - name: Compile Unix (POSIX)
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: bash ./scripts/02_compile_binaries/07_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.arch }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ matrix.platform.minos || '' }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/openssl-src"
+        run: bash ./scripts/02_compile_binaries/07_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ github.workspace }}/openssl-src" "${{ github.workspace }}/raw_artifact/usr/local" "${{ matrix.platform.minos || '' }}" "${{ matrix.platform.api || '' }}"
 
       # Step 12: Organize Unix Binaries
       - name: Organize Unix Binaries
@@ -272,12 +278,12 @@ jobs:
       # Step 3: Prepare HybridCRT Targets
       - name: Prepare HybridCRT Targets
         shell: bash
-        run: bash ./scripts/03_compile_arm64x_slices/01_prepare_slice_targets.sh "$GITHUB_WORKSPACE/openssl-src" "$GITHUB_WORKSPACE/config"
+        run: bash ./scripts/03_compile_arm64x_slices/01_prepare_slice_targets.sh "${{ github.workspace }}/openssl-src"
 
       # Step 4: Compile and Stage Slice Binaries
       - name: Compile and Stage Slice Binaries
         shell: cmd
-        run: call scripts/03_compile_arm64x_slices/02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "%GITHUB_WORKSPACE%\openssl-src" "%GITHUB_WORKSPACE%\temp_install" "%GITHUB_WORKSPACE%\slice_out"
+        run: call scripts\03_compile_arm64x_slices\02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\slice_out"
 
       # Step 5: Upload Slice Artifact
       - name: Upload Slice Artifact
@@ -307,10 +313,9 @@ jobs:
           path: slices
           merge-multiple: false
 
-      # Step 3: Fuse ARM64X Binaries and Dynamic Modules
       - name: Fuse ARM64X Binaries and Dynamic Modules
         shell: pwsh
-        run: pwsh ./scripts/04_merge_arm64x/01_fuse_binaries.ps1 -SlicesDir "$env:GITHUB_WORKSPACE\slices" -DistSharedDir "$env:GITHUB_WORKSPACE\raw_shared\dist" -DistStaticDir "$env:GITHUB_WORKSPACE\raw_static\dist" -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/04_merge_arm64x/01_fuse_binaries.ps1
 
       # Step 4: Recursive Deep Verification of All ARM64X Binaries
       - name: Recursive Deep Verification of All ARM64X Binaries
@@ -321,7 +326,7 @@ jobs:
       - name: Check for Windows Binaries to Sign
         id: check_binaries
         shell: pwsh
-        run: pwsh ./scripts/04_merge_arm64x/03_check_binaries.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/03_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_shared\dist"
 
       # Step 6: Azure Login
       - name: Azure Login
@@ -747,18 +752,18 @@ jobs:
       - name: Merge Binaries and Assets
         if: matrix.label != 'macOS'
         shell: bash
-        run: bash ./scripts/08_package_release/01_merge_binaries.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
+        run: bash ./scripts/08_package_release/01_merge_binaries.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 6: Organize & Lipo (macOS Universal)
-      - name: Organize & Lipo (macOS Universal)
+      - name: Build macOS Universal Binaries
         if: matrix.label == 'macOS'
         shell: bash
-        run: bash ./scripts/08_package_release/02_build_macos_universal.sh "$GITHUB_WORKSPACE/raw-binaries" "$GITHUB_WORKSPACE/dist"
+        run: bash ./scripts/08_package_release/02_build_macos_universal.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 7: Finalize Package
       - name: Finalize Package
         shell: bash
-        run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "$GITHUB_WORKSPACE/common-assets" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE"
+        run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type || 'release' }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "${{ github.workspace }}/common-assets" "${{ github.workspace }}/dist" "${{ github.workspace }}"
 
       # Step 8: Upload Final Archive
       - name: Upload Final Archive
@@ -798,7 +803,7 @@ jobs:
         uses: actions/checkout@v6
 
       # Step 2: Delete Intermediate Artifacts (raw, slice, common-assets)
-      - name: Delete Intermediate Artifacts (raw, slice, common-assets)
+      - name: Delete Raw and Common Artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash ./scripts/09_cleanup_artifacts/01_delete_artifacts.sh "${{ github.repository }}" "${{ github.run_id }}"
+        run: bash ./scripts/09_cleanup_artifacts/01_delete_artifacts.sh "${{ github.run_id }}" "${{ github.repository }}"

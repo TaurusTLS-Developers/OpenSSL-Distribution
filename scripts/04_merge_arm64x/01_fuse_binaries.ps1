@@ -1,36 +1,22 @@
 <#
 .SYNOPSIS
-    Job: 2c_merge-windows-arm64x | Step: 3 (Fuse ARM64X Binaries and Dynamic Modules)
-    Merges native ARM64 and ARM64EC slices into true ARM64X dual-architecture binaries.
-.PARAMETER SlicesDir
-    Path to directory containing downloaded or staged slice folders.
-.PARAMETER DistSharedDir
-    Output directory for shared ARM64X binaries (defaults to raw_shared\dist).
-.PARAMETER DistStaticDir
-    Output directory for static ARM64X libraries (defaults to raw_static\dist).
-.PARAMETER WorkspaceDir
-    Root workspace directory (defaults to current directory).
+    Fuses native ARM64 and ARM64EC slices into true ARM64X binaries and dynamic modules.
+.DESCRIPTION
+    Uses $env:GITHUB_WORKSPACE (or current directory if running locally) automatically.
 #>
 [CmdletBinding()]
 param(
-    [string]$SlicesDir,
-    [string]$DistSharedDir,
-    [string]$DistStaticDir,
-    [string]$WorkspaceDir
+    # Optional override for manual local testing; defaults to environment variable or PWD
+    [string]$WorkspaceDir = ($env:GITHUB_WORKSPACE ?? $PWD.Path)
 )
 
 $ErrorActionPreference = 'Stop'
 
-$wsDir = if ($WorkspaceDir) { $WorkspaceDir } elseif ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { $PWD.Path }
-if (-not $SlicesDir)     { $SlicesDir     = Join-Path $wsDir "slices" }
-if (-not $DistSharedDir) { $DistSharedDir = Join-Path $wsDir "raw_shared\dist" }
-if (-not $DistStaticDir) { $DistStaticDir = Join-Path $wsDir "raw_static\dist" }
-
-Write-Host "[FUSE-ARM64X] Starting ARM64X Fusion Pipeline"
-Write-Host "  Workspace   : $wsDir"
-Write-Host "  Slices Dir  : $SlicesDir"
-Write-Host "  Dist Shared : $DistSharedDir"
-Write-Host "  Dist Static : $DistStaticDir"
+# Resolve workspace and target distribution directories
+$wsDir      = $WorkspaceDir
+$distShared = Join-Path $wsDir "raw_shared\dist"
+$distStatic = Join-Path $wsDir "raw_static\dist"
+$slicesDir  = Join-Path $wsDir "slices"
 
 # Locate MSVC Tools
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -39,23 +25,23 @@ if (-not (Test-Path $vsPath)) { throw "FATAL: Visual Studio installation path co
 
 $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
 $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
-    Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
+  Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
 if (-not (Test-Path $dumpbin)) { throw "FATAL: Hostx64 dumpbin.exe not found!" }
 
 # Initialize output directory structure
 New-Item -ItemType Directory -Force -Path `
-    "$DistStaticDir\lib\static\arm64", "$DistStaticDir\lib\static\arm64ec", `
-    "$DistSharedDir\lib\import\arm64", "$DistSharedDir\lib\import\arm64ec", `
-    "$DistSharedDir\engines", "$DistSharedDir\providers" | Out-Null
+  "$distStatic\lib\static\arm64", "$distStatic\lib\static\arm64ec", `
+  "$distShared\lib\import\arm64", "$distShared\lib\import\arm64ec", `
+  "$distShared\engines", "$distShared\providers" | Out-Null
 
-# Resolve Slice Directories
-$arm64Shared   = Get-ChildItem $SlicesDir -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
-$arm64Static   = Get-ChildItem $SlicesDir -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
-$arm64ecShared = Get-ChildItem $SlicesDir -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
-$arm64ecStatic = Get-ChildItem $SlicesDir -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
+# Resolve Slice Directories from $slicesDir
+$arm64Shared   = Get-ChildItem $slicesDir -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
+$arm64Static   = Get-ChildItem $slicesDir -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
+$arm64ecShared = Get-ChildItem $slicesDir -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
+$arm64ecStatic = Get-ChildItem $slicesDir -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
 
 if (-not $arm64Shared -or -not $arm64Static -or -not $arm64ecShared -or -not $arm64ecStatic) {
-    throw "FATAL: One or more slice directories were not found in $SlicesDir!"
+  throw "FATAL: One or more slice directories were not found in $slicesDir!"
 }
 
 # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)

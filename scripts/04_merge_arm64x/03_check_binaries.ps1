@@ -4,16 +4,11 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Folder = "$PWD\raw_shared\dist"
+    [string]$Folder = (Join-Path ($env:GITHUB_WORKSPACE ?? $PWD.Path) "raw_shared\dist")
 )
 
 $ErrorActionPreference = 'Stop'
 
-try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    & "$scriptDir\common\check_binaries.ps1" -Folder $Folder -Filter @("*.exe", "*.dll")
-}
-catch {
-    Write-Error "Failed to check for Windows binaries for signing: $($_.Exception.Message)"
-    exit 1
-}
+$commonDir = $env:COMMON_SCRIPTS_DIR ?? (Join-Path ($env:GITHUB_WORKSPACE ?? $PWD.Path) "scripts\common")
+
+& "$commonDir\check_binaries.ps1" -Folder $Folder -Filter @("*.exe", "*.dll")

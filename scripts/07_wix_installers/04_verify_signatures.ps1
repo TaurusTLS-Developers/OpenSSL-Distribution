@@ -1,17 +1,16 @@
 <#
 .SYNOPSIS
-    Job: 3c_wix-windows-installers | Step: 11 (Verify Signed MSI)
+    Job: 07_wix_installers | Verify Signed MSI
 #>
 [CmdletBinding()]
 param(
-    [string]$Folder = "$PWD\installers"
+    [string]$Folder = ($env:INSTALLERS_DIR ?? (Join-Path $PWD.Path "installers"))
 )
 
 $ErrorActionPreference = 'Stop'
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    & "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.msi") -Recurse:$false
+    & "$env:COMMON_SCRIPTS_DIR\verify_signatures.ps1" -Folder $Folder -Filter @("*.msi") -Recurse:$false
 }
 catch {
     Write-Error "Failed to verify signed MSI: $($_.Exception.Message)"

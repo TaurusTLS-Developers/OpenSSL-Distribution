@@ -1,19 +1,18 @@
 <#
 .SYNOPSIS
-    Job: 3b_msix-windows-installers | Step: 8 (Verify Signed MSIX Package)
+    Job: 06_msix_installers | Verify Signed MSIX
 #>
 [CmdletBinding()]
 param(
-    [string]$Folder = "$PWD\installers"
+    [string]$Folder = ($env:INSTALLERS_DIR ?? (Join-Path $PWD.Path "installers"))
 )
 
 $ErrorActionPreference = 'Stop'
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    & "$scriptDir\common\verify_signatures.ps1" -Folder $Folder -Filter @("*.msix") -Recurse:$false
+    & "$env:COMMON_SCRIPTS_DIR\verify_signatures.ps1" -Folder $Folder -Filter @("*.msix") -Recurse:$false
 }
 catch {
-    Write-Error "Failed to verify signed MSIX package: $($_.Exception.Message)"
+    Write-Error "Failed to verify signed MSIX: $($_.Exception.Message)"
     exit 1
 }

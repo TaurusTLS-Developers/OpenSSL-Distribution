@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
-# =============================================================================
-# scripts/2_compile-binaries_10_install_linux_deps.sh
-# Job: 2_compile-binaries | Step: 10 (Install Linux Dependencies)
-# Installs libsctp-dev and cross-compilation toolchains if on Linux.
-# =============================================================================
 set -euo pipefail
 
-ARCH="${1:-${ARCH:-x64}}"
+# =========================================================================
+# Script: 06_install_linux_deps.sh
+# Job:    02_compile_binaries
+# Desc:   Installs build dependencies for Linux (libsctp-dev, gcc-aarch64)
+# =========================================================================
 
-echo "[INSTALL-DEPS] Installing Linux dependencies for arch: $ARCH..."
+ARCH="${1:-${TARGET_ARCH:-x64}}"
 
-if command -v apt-get >/dev/null 2>&1; then
-  sudo apt-get update
-  sudo apt-get install -y libsctp-dev
-  if [ "$ARCH" == "arm64" ]; then
-    echo "[INSTALL-DEPS] Installing aarch64 cross-compiler toolchain..."
-    sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-  fi
-else
-  echo "[INSTALL-DEPS] Non-Debian/apt system detected. Ensure libsctp-dev and cross-toolchain are present."
+echo "================================================================"
+echo " [LINUX-DEPS] Target Architecture: $ARCH"
+echo "================================================================"
+
+# Use sudo only if not already running as root (e.g. inside containers)
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    else
+        echo "FATAL: Not running as root and 'sudo' is not installed!"
+        exit 1
+    fi
 fi
 
-echo "[INSTALL-DEPS] ✅ Dependencies installed."
+if ! command -v apt-get >/dev/null 2>&1; then
+    echo "⚠️ Warning: apt-get not found. Skipping Debian/Ubuntu package installation."
+    exit 0
+fi
+
+echo "📦 Updating apt repositories..."
+$SUDO apt-get update -qq
+
+echo "📦 Installing libsctp-dev..."
+$SUDO apt-get install -y --no-install-recommends libsctp-dev
+
+if [ "$ARCH" == "arm64" ] || [ "$ARCH" == "aarch64" ]; then
+    echo "📦 Installing ARM64 cross-compiler (gcc-aarch64-linux-gnu)..."
+    $SUDO apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+fi
+
+echo "✅ Linux dependencies installed successfully."
+exit 0

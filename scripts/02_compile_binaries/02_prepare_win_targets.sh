@@ -1,33 +1,59 @@
 #!/usr/bin/env bash
-# =============================================================================
-# scripts/2_compile-binaries_4_prepare_windows_targets.sh
-# Job: 2_compile-binaries | Step: 4 (Prepare Windows Targets)
-# Injects HybridCRT target configuration and dynamically configures docs disable flag.
-# =============================================================================
 set -euo pipefail
 
-OPENSSL_SRC_DIR="${1:-${OPENSSL_SRC_DIR:-$PWD/openssl-src}}"
-CONFIG_DIR="${2:-${CONFIG_DIR:-$PWD/config}}"
+# =========================================================================
+# Script: 02_prepare_win_targets.sh
+# Job:    02_compile_binaries
+# Desc:   Copies config/99-win-hybridcrt.conf into openssl-src/Configurations/
+#         and resolves the __DOCS__ placeholder based on OpenSSL version.
+# =========================================================================
 
-echo "[PREPARE-WIN] Preparing Windows HybridCRT targets..."
-echo "  OpenSSL Source: $OPENSSL_SRC_DIR"
-echo "  Config Dir    : $CONFIG_DIR"
-
-if [ ! -d "$OPENSSL_SRC_DIR/Configurations" ]; then
-  echo "ERROR: Configurations folder not found in '$OPENSSL_SRC_DIR'" >&2
-  exit 1
+WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
+DEFAULT_SRC="$WS_DIR/openssl-src"
+if [ ! -d "$DEFAULT_SRC" ]; then
+    DEFAULT_SRC="$WS_DIR"
 fi
 
-cp "$CONFIG_DIR/99-win-hybridcrt.conf" "$OPENSSL_SRC_DIR/Configurations/99-win-hybridcrt.conf"
+SRC_DIR="${1:-${SRC_DIR:-$DEFAULT_SRC}}"
+CFG_DIR="${2:-${CONFIG_DIR:-$WS_DIR/config}}"
 
-cd "$OPENSSL_SRC_DIR"
+SRC_CONF="$CFG_DIR/99-win-hybridcrt.conf"
+DEST_CONF="$SRC_DIR/Configurations/99-win-hybridcrt.conf"
 
-if grep -q "no-docs" INSTALL.md 2>/dev/null; then
-  echo "[PREPARE-WIN] Feature 'docs' is supported in this OpenSSL version. Disabling it in config."
-  sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-win-hybridcrt.conf
+echo "================================================================"
+echo " [PREPARE-WIN-TARGETS] Template:        $SRC_CONF"
+echo " [PREPARE-WIN-TARGETS] OpenSSL Source:  $SRC_DIR"
+echo " [PREPARE-WIN-TARGETS] Output Target:   $DEST_CONF"
+echo "================================================================"
+
+if [ ! -f "$SRC_CONF" ]; then
+    echo "FATAL: Template config not found at '$SRC_CONF'!"
+    exit 1
+fi
+
+if [ ! -d "$SRC_DIR/Configurations" ]; then
+    echo "FATAL: OpenSSL Configurations directory not found at '$SRC_DIR/Configurations'!"
+    exit 1
+fi
+
+# 1. Copy committed config from config/
+cp -f "$SRC_CONF" "$DEST_CONF"
+
+# 2. Dynamically check if 'no-docs' is supported by this OpenSSL version
+INSTALL_DOC="$SRC_DIR/INSTALL.md"
+if [ -f "$INSTALL_DOC" ] && grep -q "no-docs" "$INSTALL_DOC"; then
+    echo "  [+] Feature 'docs' is supported. Disabling it in config."
+    sed -i 's/"__DOCS__"/"docs"/g' "$DEST_CONF"
 else
-  echo "[PREPARE-WIN] Feature 'docs' is NOT supported (e.g. OpenSSL 3.0.x/3.1.x). Removing from config."
-  sed -i 's/"__DOCS__"//g' Configurations/99-win-hybridcrt.conf
+    echo "  [+] Feature 'docs' not supported in this version. Removing placeholder."
+    sed -i 's/"__DOCS__"//g' "$DEST_CONF"
 fi
 
-echo "[PREPARE-WIN] ✅ Configurations/99-win-hybridcrt.conf successfully prepared."
+# 3. Final validation
+if [ ! -s "$DEST_CONF" ]; then
+    echo "FATAL: Destination config '$DEST_CONF' is missing or empty!"
+    exit 1
+fi
+
+echo "✅ Successfully deployed 99-win-hybridcrt.conf from config/."
+exit 0
