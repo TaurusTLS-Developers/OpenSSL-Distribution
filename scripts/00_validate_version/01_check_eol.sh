@@ -124,7 +124,18 @@ echo " [VALIDATE-VERSION] InnoSetup AppId:     $INNO_APP_ID"
 echo " [VALIDATE-VERSION] Artifact Version:    $ARTIFACT_VERSION"
 echo "================================================================"
 
-# 5. Output values to GITHUB_OUTPUT (or stdout if local)
+# 5. Export selected flags for downstream step evaluation
+{
+  echo "build_windows=${BUILD_WINDOWS:-true}"
+  echo "build_linux=${BUILD_LINUX:-true}"
+  echo "build_macos=${BUILD_MACOS:-true}"
+  echo "build_android=${BUILD_ANDROID:-true}"
+  echo "build_ios=${BUILD_IOS:-true}"
+  echo "sign_binaries=${SIGN_BINARIES:-false}"
+  echo "build_installers=${BUILD_INSTALLERS:-false}"
+} >> "$GITHUB_OUTPUT"
+
+# 6. Output values to GITHUB_OUTPUT (or stdout if local)
 {
     echo "version=$VERSION"
     echo "major_minor=$MAJOR_MINOR"
@@ -136,5 +147,25 @@ echo "================================================================"
     echo "artifact_version=$ARTIFACT_VERSION"
     echo "slugified_version=$SLUGIFIED_VERSION"
 } >> "$GITHUB_OUTPUT"
+
+# 7. Append at the bottom of scripts/00_validate_version/01_check_eol.sh:
+
+echo "================================================================"
+echo "                   WORKFLOW INPUTS SUMMARY                      "
+echo "================================================================"
+echo " Version:           $VERSION"
+echo " Build Type:        $BUILD_TYPE"
+echo " Sign Binaries:     ${SIGN_BINARIES:-false}"
+echo " Build Installers:  ${BUILD_INSTALLERS:-false}"
+echo " Ignore EOL:        $IGNORE_EOL"
+echo " Keep Raw Artifacts:${KEEP_RAW_ARTIFACTS:-false}"
+echo "----------------------------------------------------------------"
+echo " Target Platforms Selected:"
+echo "   - Windows:       ${BUILD_WINDOWS:-true}"
+echo "   - Linux:         ${BUILD_LINUX:-true}"
+echo "   - macOS:         ${BUILD_MACOS:-true}"
+echo "   - Android:       ${BUILD_ANDROID:-true}"
+echo "   - iOS:           ${BUILD_IOS:-true}"
+echo "================================================================"
 
 exit 0

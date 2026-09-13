@@ -147,6 +147,14 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_WINDOWS: ${{ inputs.build_windows }}
+          BUILD_LINUX: ${{ inputs.build_linux }}
+          BUILD_MACOS: ${{ inputs.build_macos }}
+          BUILD_ANDROID: ${{ inputs.build_android }}
+          BUILD_IOS: ${{ inputs.build_ios }}
+          SIGN_BINARIES: ${{ inputs.sign_binaries }}
+          BUILD_INSTALLERS: ${{ inputs.build_installers }}
+          KEEP_RAW_ARTIFACTS: ${{ inputs.keep_raw_artifacts }}
         run: bash ./scripts/00_validate_version/01_check_eol.sh "${{ inputs.version }}" "${{ inputs.build_type }}" "${{ inputs.ignore_eol }}"
 
       # Step 3: Upload Build Metadata (Universal)
