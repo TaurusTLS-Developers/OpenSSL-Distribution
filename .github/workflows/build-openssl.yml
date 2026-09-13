@@ -333,7 +333,7 @@ jobs:
   compile-windows-arm64x-slices:
     name: Compile Windows ARM64X Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
     needs: validate-version
-    if: inputs.build_windows != false
+    if: inputs.build_windows == true
     strategy:
       fail-fast: false
       matrix:
@@ -383,7 +383,7 @@ jobs:
   merge-windows-arm64x:
     name: Merge & Link ARM64X Binaries
     needs: [validate-version, compile-windows-arm64x-slices]
-    if: inputs.build_windows != false
+    if: inputs.build_windows == true
     runs-on: windows-latest
     steps:
       # Step 1: Checkout Orchestrator Repository
@@ -467,7 +467,7 @@ jobs:
     # Execute ONLY if installers and Windows target are enabled:
     if: |
       inputs.build_installers == true &&
-      inputs.build_windows != false &&
+      inputs.build_windows == true &&
       needs.validate-version.outputs.is_fork == 'false'
     runs-on: windows-latest
     permissions:
@@ -587,7 +587,7 @@ jobs:
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: |
       inputs.build_installers == true &&
-      inputs.build_windows != false &&
+      inputs.build_windows == true &&
       needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
@@ -690,7 +690,7 @@ jobs:
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
     if: |
       inputs.build_installers == true &&
-      inputs.build_windows != false &&
+      inputs.build_windows == true &&
       needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
@@ -861,39 +861,39 @@ jobs:
         if: |
           matrix.label != 'macOS' && 
           (
-            (matrix.label == 'Windows' && inputs.build_windows != false) || 
-            (matrix.label == 'Linux' && inputs.build_linux != false) || 
-            (matrix.label == 'Android' && inputs.build_android != false) || 
-            (matrix.label == 'iOS' && inputs.build_ios != false)
+            (matrix.label == 'Windows' && inputs.build_windows == true) || 
+            (matrix.label == 'Linux' && inputs.build_linux == true) || 
+            (matrix.label == 'Android' && inputs.build_android == true) || 
+            (matrix.label == 'iOS' && inputs.build_ios == true)
           )
         shell: bash
         run: bash ./scripts/08_package_release/01_merge_binaries.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 6: Organize & Lipo (macOS Universal)
       - name: Build macOS Universal Binaries
-        if: matrix.label == 'macOS' && inputs.build_macos != false
+        if: matrix.label == 'macOS' && inputs.build_macos == true
         shell: bash
         run: bash ./scripts/08_package_release/02_build_macos_universal.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 7: Finalize Package
       - name: Finalize Package
         if: |
-          (matrix.label == 'Windows' && inputs.build_windows != false) ||
-          (matrix.label == 'Linux' && inputs.build_linux != false) ||
-          (matrix.label == 'macOS' && inputs.build_macos != false) ||
-          (matrix.label == 'Android' && inputs.build_android != false) ||
-          (matrix.label == 'iOS' && inputs.build_ios != false)
+          (matrix.label == 'Windows' && inputs.build_windows == true) ||
+          (matrix.label == 'Linux' && inputs.build_linux == true) ||
+          (matrix.label == 'macOS' && inputs.build_macos == true) ||
+          (matrix.label == 'Android' && inputs.build_android == true) ||
+          (matrix.label == 'iOS' && inputs.build_ios == true)
         shell: bash
         run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type || 'release' }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "${{ github.workspace }}/common-assets" "${{ github.workspace }}/dist" "${{ github.workspace }}"
 
       # Step 8: Upload Final Archive
       - name: Upload Final Archive
         if: |
-          (matrix.label == 'Windows' && inputs.build_windows != false) ||
-          (matrix.label == 'Linux' && inputs.build_linux != false) ||
-          (matrix.label == 'macOS' && inputs.build_macos != false) ||
-          (matrix.label == 'Android' && inputs.build_android != false) ||
-          (matrix.label == 'iOS' && inputs.build_ios != false)
+          (matrix.label == 'Windows' && inputs.build_windows == true) ||
+          (matrix.label == 'Linux' && inputs.build_linux == true) ||
+          (matrix.label == 'macOS' && inputs.build_macos == true) ||
+          (matrix.label == 'Android' && inputs.build_android == true) ||
+          (matrix.label == 'iOS' && inputs.build_ios == true)
         uses: actions/upload-artifact@v7
         with:
           name: openssl-${{ needs.validate-version.outputs.artifact_version }}-${{ matrix.label }}-${{ matrix.arch }}
