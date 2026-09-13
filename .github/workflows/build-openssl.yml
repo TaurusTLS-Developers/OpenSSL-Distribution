@@ -131,12 +131,14 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       major_minor: ${{ steps.check.outputs.major_minor }}
       inno_app_id: ${{ steps.check.outputs.inno_app_id }}
+      compile_matrix: ${{ steps.check.outputs.compile_matrix }}
+      package_matrix: ${{ steps.check.outputs.package_matrix }}
       target_repo: ${{ steps.check.outputs.target_repo }}
       ref: ${{ steps.check.outputs.ref }}
       sha: ${{ steps.check.outputs.sha }}
       artifact_version: ${{ steps.check.outputs.artifact_version }}
       slugified_version: ${{ steps.check.outputs.slugified_version }}
-      is_fork: ${{ steps.check.outputs.is_fork }}
+      is_fork: ${{ steps.check.outputs.is_fork }}      
     steps:
       # Step 1: Checkout Orchestrator Repository
       - name: Checkout Orchestrator Repo
@@ -207,28 +209,13 @@ jobs:
   # 2. COMPILE BINARIES (Fan-Out Matrix)
   # =========================================================================
   compile-binaries:
-    name: Compile (${{ matrix.platform.label }} ${{ matrix.platform.arch }} ${{ matrix.linkage }})
+    name: Compile (${{ matrix.label }} ${{ matrix.arch }} ${{ matrix.linkage }})
     needs: validate-version
     strategy:
       fail-fast: false
       matrix:
-        linkage: [shared, static]
-        platform:
-          - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
-          - { label: Windows, os: windows-latest, arch: x86, target: VC-WIN32, vcvars: x86 }
-          - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
-          - { label: Linux, os: ubuntu-latest, arch: arm64, target: linux-aarch64 }
-          - { label: macOS, os: macos-14, arch: x64, target: darwin64-x86_64-cc, minos: "10.14" }
-          - { label: macOS, os: macos-14, arch: arm64, target: darwin64-arm64-cc, minos: "11.0" }
-          - { label: Android, os: ubuntu-latest, arch: arm64, target: android-arm64, api: 21 }
-          - { label: Android, os: ubuntu-latest, arch: arm, target: android-arm, api: 21 }
-          - { label: iOS, os: macos-14, arch: arm64, target: ios64-cross }
-          - { label: iOS, os: macos-14, arch: sim-arm64, target: iossimulator-xcrun, minos: "11.0" }
-        exclude:
-          - linkage: shared
-            platform: { label: iOS }
-          
-    runs-on: ${{ matrix.platform.os }}
+        include: ${{ fromJSON(needs.validate-version.outputs.compile_matrix) }}
+    runs-on: ${{ matrix.os }}
     permissions:
       id-token: write
       contents: read
@@ -818,21 +805,11 @@ jobs:
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { label: Windows, arch: x64, runner: ubuntu-latest }
-          - { label: Windows, arch: x86, runner: ubuntu-latest }
-          - { label: Windows, arch: arm64, runner: ubuntu-latest }
-          - { label: Linux, arch: x64, runner: ubuntu-latest }
-          - { label: Linux, arch: arm64, runner: ubuntu-latest }
-          - { label: Android, arch: arm64, runner: ubuntu-latest }
-          - { label: Android, arch: arm, runner: ubuntu-latest }
-          - { label: macOS, arch: universal, runner: macos-14 }
-          - { label: iOS, arch: arm64, runner: macos-14 }
-          - { label: iOS, arch: sim-arm64, runner: macos-14 }
-          
+        include: ${{ fromJSON(needs.validate-version.outputs.package_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       # Step 1: Checkout Orchestrator Repository

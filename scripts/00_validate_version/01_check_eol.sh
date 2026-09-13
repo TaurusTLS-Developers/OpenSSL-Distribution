@@ -148,7 +148,60 @@ echo "================================================================"
     echo "slugified_version=$SLUGIFIED_VERSION"
 } >> "$GITHUB_OUTPUT"
 
-# 7. Append at the bottom of scripts/00_validate_version/01_check_eol.sh:
+# 7. Dynamic Matrix Catalog Generation
+
+# 7.1. Full Platform Catalog for Compilation
+ALL_COMPILE_TARGETS='[
+  {"label": "Windows", "os": "windows-latest", "arch": "x64", "linkage": "shared", "target": "VC-WIN64A", "vcvars": "amd64"},
+  {"label": "Windows", "os": "windows-latest", "arch": "x64", "linkage": "static", "target": "VC-WIN64A", "vcvars": "amd64"},
+  {"label": "Windows", "os": "windows-latest", "arch": "x86", "linkage": "shared", "target": "VC-WIN32", "vcvars": "x86"},
+  {"label": "Windows", "os": "windows-latest", "arch": "x86", "linkage": "static", "target": "VC-WIN32", "vcvars": "x86"},
+  {"label": "Linux", "os": "ubuntu-latest", "arch": "x64", "linkage": "shared", "target": "linux-x86_64"},
+  {"label": "Linux", "os": "ubuntu-latest", "arch": "x64", "linkage": "static", "target": "linux-x86_64"},
+  {"label": "Linux", "os": "ubuntu-latest", "arch": "arm64", "linkage": "shared", "target": "linux-aarch64"},
+  {"label": "Linux", "os": "ubuntu-latest", "arch": "arm64", "linkage": "static", "target": "linux-aarch64"},
+  {"label": "macOS", "os": "macos-14", "arch": "x64", "linkage": "shared", "target": "darwin64-x86_64-cc", "minos": "10.14"},
+  {"label": "macOS", "os": "macos-14", "arch": "x64", "linkage": "static", "target": "darwin64-x86_64-cc", "minos": "10.14"},
+  {"label": "macOS", "os": "macos-14", "arch": "arm64", "linkage": "shared", "target": "darwin64-arm64-cc", "minos": "11.0"},
+  {"label": "macOS", "os": "macos-14", "arch": "arm64", "linkage": "static", "target": "darwin64-arm64-cc", "minos": "11.0"},
+  {"label": "Android", "os": "ubuntu-latest", "arch": "arm64", "linkage": "shared", "target": "android-arm64", "api": "21"},
+  {"label": "Android", "os": "ubuntu-latest", "arch": "arm64", "linkage": "static", "target": "android-arm64", "api": "21"},
+  {"label": "Android", "os": "ubuntu-latest", "arch": "arm", "linkage": "shared", "target": "android-arm", "api": "21"},
+  {"label": "Android", "os": "ubuntu-latest", "arch": "arm", "linkage": "static", "target": "android-arm", "api": "21"},
+  {"label": "iOS", "os": "macos-14", "arch": "arm64", "linkage": "static", "target": "ios64-cross"},
+  {"label": "iOS", "os": "macos-14", "arch": "sim-arm64", "linkage": "static", "target": "iossimulator-xcrun", "minos": "11.0"}
+]'
+
+# 7.2. Full Platform Catalog for Packaging
+ALL_PACKAGE_TARGETS='[
+  {"label": "Windows", "arch": "x64", "runner": "ubuntu-latest"},
+  {"label": "Windows", "arch": "x86", "runner": "ubuntu-latest"},
+  {"label": "Windows", "arch": "arm64", "runner": "ubuntu-latest"},
+  {"label": "Linux", "arch": "x64", "runner": "ubuntu-latest"},
+  {"label": "Linux", "arch": "arm64", "runner": "ubuntu-latest"},
+  {"label": "Android", "arch": "arm64", "runner": "ubuntu-latest"},
+  {"label": "Android", "arch": "arm", "runner": "ubuntu-latest"},
+  {"label": "macOS", "arch": "universal", "runner": "macos-14"},
+  {"label": "iOS", "arch": "arm64", "runner": "macos-14"},
+  {"label": "iOS", "arch": "sim-arm64", "runner": "macos-14"}
+]'
+
+# 7.3. Filter Enabled Platform Labels based on Inputs
+SELECTED_LABELS=()
+[ "${BUILD_WINDOWS:-true}" = "true" ] && SELECTED_LABELS+=("Windows")
+[ "${BUILD_LINUX:-true}" = "true" ]   && SELECTED_LABELS+=("Linux")
+[ "${BUILD_MACOS:-true}" = "true" ]   && SELECTED_LABELS+=("macOS")
+[ "${BUILD_ANDROID:-true}" = "true" ] && SELECTED_LABELS+=("Android")
+[ "${BUILD_IOS:-true}" = "true" ]     && SELECTED_LABELS+=("iOS")
+
+if [ ${#SELECTED_LABELS[@]} -eq 0 ]; then
+    echo "FATAL: At least one target platform must be selected!"
+    exit 1
+fi
+
+LABELS_JSON=$(printf '%s\n' "${SELECTED_LABELS[@]}" | jq -R . | jq -s .)
+COMPILE_MATRIX=$(echo "$ALL_COMPILE_TARGETS" | jq -c --argjson sel "$LABELS_JSON" '[.[] | select(.label as $l | $sel | index($l))]')
+PACKAGE_MATRIX=$(echo "$ALL_PACKAGE_TARGETS" | jq -c --argjson sel "$LABELS_JSON" '[.[] | select(.label as $l | $sel | index($l))]')
 
 echo "================================================================"
 echo "                   WORKFLOW INPUTS SUMMARY                      "
@@ -159,13 +212,13 @@ echo " Sign Binaries:     ${SIGN_BINARIES:-false}"
 echo " Build Installers:  ${BUILD_INSTALLERS:-false}"
 echo " Ignore EOL:        $IGNORE_EOL"
 echo " Keep Raw Artifacts:${KEEP_RAW_ARTIFACTS:-false}"
-echo "----------------------------------------------------------------"
-echo " Target Platforms Selected:"
-echo "   - Windows:       ${BUILD_WINDOWS:-true}"
-echo "   - Linux:         ${BUILD_LINUX:-true}"
-echo "   - macOS:         ${BUILD_MACOS:-true}"
-echo "   - Android:       ${BUILD_ANDROID:-true}"
-echo "   - iOS:           ${BUILD_IOS:-true}"
+echo " Active Platforms:  ${SELECTED_LABELS[*]}"
+echo " Active Matrix Jobs: $(echo "$COMPILE_MATRIX" | jq '. | length') compile job(s)"
 echo "================================================================"
+
+{
+  echo "compile_matrix=$COMPILE_MATRIX"
+  echo "package_matrix=$PACKAGE_MATRIX"
+} >> "$GITHUB_OUTPUT"
 
 exit 0
