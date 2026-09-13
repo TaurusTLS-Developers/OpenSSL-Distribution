@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+echo "Restoring shared library symlinks..."
+cd "$(dirname "$0")"
+
+ln -sf "{{REAL_CRYPTO_FILE}}" "libcrypto.dylib"
+ln -sf "{{REAL_SSL_FILE}}" "libssl.dylib"
+
+echo "✅ Symlinks restored successfully."

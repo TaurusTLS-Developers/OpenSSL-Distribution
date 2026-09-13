@@ -63,47 +63,17 @@ else
     exit 1
 fi
 
-# 7. Generate distribution README.txt
-echo "📝 Generating distribution README.txt..."
-cat << 'EOF' > "$TARGET_DIR/README.txt"
-OpenSSL Distribution Package
-============================
+## 7. Copy distribution README.txt from config template
+echo "📝 Staging distribution README.txt from template..."
+CFG_DIR="${CONFIG_DIR:-$WS_DIR/config}"
+README="$CFG_DIR/README.txt"
 
-This package contains the OpenSSL executable, shared libraries, static libraries (stripped), C headers, and documentation.
-
-Package Layout:
----------------
-* version.txt         - OpenSSL version in this package [non-redistributable]
-* openssl             - The OpenSSL command-line utility [redistributable/optional]
-* libcrypto / libssl  - Shared libraries [redistributable/required] 
-* install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
-* engines/            - OpenSSL dynamic engines [redistributable/optional] 
-* providers/          - OpenSSL dynamic providers [redistributable/optional] 
-* doc/                - Developer Documentation [non-redistributable] 
-* include/            - C Header files [non-redistributable] 
-* lib/import/         - Import libraries (Windows only) [non-redistributable] 
-* lib/static/         - Static libraries (.lib / .a) [non-redistributable]
-
-Linking Instructions:
----------------------
-* Windows Dynamic: Link against the import libraries in `lib/import/` (which point to the DLLs in the root).
-* Windows Static:  Link against the static libraries in `lib/static/` (Compiled with /MT HybridCRT).
-* POSIX Dynamic:   Link directly against the shared libraries (.so / .dylib) in the root directory.
-* POSIX Static:    Link against the static archives (.a) in `lib/static/`.
-
-Deployment Instructions (Linux / macOS / Unix):
------------------------------------------------
-Windows file systems fail to extract Unix symbolic links. To ensure cross-platform compatibility, this archive contains only the physical shared library files.
-
-If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.X).
-
-$ cd <extracted_directory>
-$ sh ./install_symlinks.sh
-
-Windows Users:
---------------
-Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
-EOF
+if [ -f "$README" ]; then
+    cp -f "$README" "$TARGET_DIR/README.txt"
+else
+    echo "FATAL: README template not found at '$README'!"
+    exit 1
+fi
 
 # 8. Remove compiled binaries/libraries from common-assets (only headers and docs belong here)
 echo "🧹 Purging binary artifacts from common-assets..."

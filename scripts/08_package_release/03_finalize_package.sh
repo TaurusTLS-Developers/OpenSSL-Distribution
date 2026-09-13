@@ -74,29 +74,27 @@ fi
 # 3. Create install_symlinks.sh (POSIX only: Linux & macOS)
 if [ "$LABEL" == "Linux" ] || [ "$LABEL" == "macOS" ]; then
     if [ ! -f "$DIST_DIR/install_symlinks.sh" ]; then
-        echo "🔗 Generating install_symlinks.sh for $LABEL..."
+        echo "🔗 Generating install_symlinks.sh from template..."
+        CFG_DIR="${CONFIG_DIR:-$WS_DIR/config}"
         SYMLINK_SCRIPT="$DIST_DIR/install_symlinks.sh"
-        
-        cat << 'EOF' > "$SYMLINK_SCRIPT"
-#!/bin/sh
-echo "Restoring shared library symlinks..."
-EOF
-        
-        # Detect versioned libraries and append ln -sf commands
-        for lib in libcrypto libssl; do
-            if [ "$LABEL" == "Linux" ]; then
-                REAL_FILE=$(find "$DIST_DIR" -maxdepth 1 -name "${lib}.so.*" -type f -exec basename {} \; | head -n 1)
-                if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.so" >> "$SYMLINK_SCRIPT"
-                fi
-            elif [ "$LABEL" == "macOS" ]; then
-                REAL_FILE=$(find "$DIST_DIR" -maxdepth 1 -name "${lib}.*.dylib" -type f -exec basename {} \; | head -n 1)
-                if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.dylib" >> "$SYMLINK_SCRIPT"
-                fi
-            fi
-        done
-        chmod +x "$SYMLINK_SCRIPT"
+
+        if [ "$LABEL" == "Linux" ]; then
+            REAL_CRYPTO=$(find "$DIST_DIR" -maxdepth 1 -name "libcrypto.so.*" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            REAL_SSL=$(find "$DIST_DIR" -maxdepth 1 -name "libssl.so.*" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            TEMPLATE="$CFG_DIR/install_symlinks_linux.sh.template"
+        else
+            REAL_CRYPTO=$(find "$DIST_DIR" -maxdepth 1 -name "libcrypto.*.dylib" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            REAL_SSL=$(find "$DIST_DIR" -maxdepth 1 -name "libssl.*.dylib" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            TEMPLATE="$CFG_DIR/install_symlinks_macos.sh.template"
+        fi
+
+        if [ -n "$REAL_CRYPTO" ] && [ -n "$REAL_SSL" ] && [ -f "$TEMPLATE" ]; then
+            sed -e "s|{{REAL_CRYPTO_FILE}}|$REAL_CRYPTO|g" \
+                -e "s|{{REAL_SSL_FILE}}|$REAL_SSL|g" \
+                "$TEMPLATE" > "$SYMLINK_SCRIPT"
+            chmod +x "$SYMLINK_SCRIPT"
+            echo "  [+] Generated $SYMLINK_SCRIPT"
+        fi
     fi
 fi
 

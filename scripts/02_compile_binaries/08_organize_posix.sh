@@ -2,124 +2,114 @@
 set -euo pipefail
 
 # =========================================================================
-# Script: 07_compile_posix.sh
+# Script: 08_organize_posix.sh
 # Job:    02_compile_binaries
-# Desc:   Configures and compiles OpenSSL for Linux, macOS, Android, and iOS.
+# Desc:   Stages, separates, strips, and organizes POSIX binaries from
+#         raw_artifact/usr/local into raw_artifact/dist.
 # =========================================================================
 
-# 1. Parameter resolution with intelligent defaults
 LABEL="${1:-${TARGET_PLATFORM:-Linux}}"
-TARGET="${2:-${TARGET_NAME:-linux-x86_64}}"
-LINKAGE="${3:-${TARGET_LINKAGE:-shared}}"
+LINKAGE="${2:-${TARGET_LINKAGE:-shared}}"
 WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
-SRC_DIR="${4:-${OPENSSL_SRC:-$WS_DIR/openssl-src}}"
-if [ ! -d "$SRC_DIR" ]; then
-    SRC_DIR="$WS_DIR"
-fi
-
-PREFIX="${5:-${TARGET_PREFIX:-$WS_DIR/raw_artifact/usr/local}}"
-MINOS="${6:-${TARGET_MINOS:-}}"
-API="${7:-${TARGET_API:-21}}"
+PREFIX="${3:-${TARGET_PREFIX:-$WS_DIR/raw_artifact/usr/local}}"
+DIST_DIR="${4:-${TARGET_DIST:-$WS_DIR/raw_artifact/dist}}"
 
 echo "================================================================"
-echo " [COMPILE-POSIX] Platform:     $LABEL"
-echo " [COMPILE-POSIX] Target:       $TARGET"
-echo " [COMPILE-POSIX] Linkage:      $LINKAGE"
-echo " [COMPILE-POSIX] Source Dir:   $SRC_DIR"
-echo " [COMPILE-POSIX] Prefix:       $PREFIX"
-echo " [COMPILE-POSIX] MinOS:        $MINOS"
-echo " [COMPILE-POSIX] Android API:  $API"
+echo " [ORGANIZE-POSIX] Platform:    $LABEL"
+echo " [ORGANIZE-POSIX] Linkage:     $LINKAGE"
+echo " [ORGANIZE-POSIX] Prefix Dir:  $PREFIX"
+echo " [ORGANIZE-POSIX] Target Dist: $DIST_DIR"
 echo "================================================================"
 
-if [ ! -f "$SRC_DIR/Configure" ]; then
-    echo "FATAL: OpenSSL Configure script not found in '$SRC_DIR'!"
+if [ ! -d "$PREFIX" ]; then
+    echo "FATAL: Install prefix directory '$PREFIX' does not exist! Compilation likely failed."
     exit 1
 fi
 
-# Ensure PREFIX is an absolute path (mandatory for OpenSSL)
-mkdir -p "$PREFIX"
-PREFIX="$(cd "$PREFIX" && pwd)"
+mkdir -p "$DIST_DIR/engines" "$DIST_DIR/providers" "$DIST_DIR/lib/static"
 
-# 2. Switch to OpenSSL source directory
-cd "$SRC_DIR"
-
-EXTRA_FLAGS=""
-
-# 3. Platform-Specific Setup
-case "$LABEL" in
-    macOS)
-        if [ -n "$MINOS" ]; then
-            EXTRA_FLAGS="-mmacosx-version-min=$MINOS"
-        fi
-        ;;
-    Linux)
-        # Pass '\$\$ORIGIN' so Make turns it into literal '$ORIGIN' in RUNPATH
-        EXTRA_FLAGS="enable-sctp -Wl,-rpath,'\$\$ORIGIN'"
-        if [ "$TARGET" == "linux-aarch64" ]; then
-            export CROSS_COMPILE="aarch64-linux-gnu-"
-            echo "  [+] Set CROSS_COMPILE=aarch64-linux-gnu-"
-        fi
-        ;;
-    Android)
-        # Idempotent: Patch 16K max-page-size only once
-        ANDROID_CONF="Configurations/15-android.conf"
-        if [ -f "$ANDROID_CONF" ] && ! grep -q "max-page-size" "$ANDROID_CONF"; then
-            echo "  [+] Injecting 16K page alignment (-Wl,-z,max-page-size=16384) into $ANDROID_CONF"
-            sed -i 's/-fPIC/-fPIC -Wl,-z,max-page-size=16384/g' "$ANDROID_CONF"
-        fi
-
-        NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-}}"
-        if [ -z "$NDK_ROOT" ]; then
-            echo "FATAL: ANDROID_NDK_ROOT or ANDROID_NDK_LATEST_HOME must be set for Android builds!"
-            exit 1
-        fi
-        export ANDROID_NDK_ROOT="$NDK_ROOT"
-        export PATH="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-        echo "  [+] Android NDK configured: $NDK_ROOT"
-        ;;
-    iOS)
-        XCODE_DEV="$(xcode-select -print-path)"
-        if [[ "$TARGET" == *"simulator"* ]]; then
-            export CROSS_TOP="$XCODE_DEV/Platforms/iPhoneSimulator.platform/Developer"
-            export CROSS_SDK="iPhoneSimulator.sdk"
-            if [ -n "$MINOS" ]; then
-                EXTRA_FLAGS="-mios-simulator-version-min=$MINOS"
-            fi
-        else
-            export CROSS_TOP="$XCODE_DEV/Platforms/iPhoneOS.platform/Developer"
-            export CROSS_SDK="iPhoneOS.sdk"
-            if [ -n "$MINOS" ]; then
-                EXTRA_FLAGS="-miphoneos-version-min=$MINOS"
-            fi
-        fi
-        echo "  [+] iOS Toolchain configured: $CROSS_SDK ($CROSS_TOP)"
-        ;;
-    *)
-        echo "FATAL: Unsupported POSIX platform: '$LABEL'"
-        exit 1
-        ;;
-esac
-
-# 4. Run OpenSSL Configure
-echo "⚙️ Configuring OpenSSL for $TARGET ($LINKAGE)..."
 if [ "$LINKAGE" == "shared" ]; then
-    # Shared builds enable tests exclusion
-    ./Configure "$TARGET" shared no-tests $EXTRA_FLAGS --prefix="$PREFIX"
+    echo "📦 Staging shared binaries..."
+
+    # 1. CLI Executable (openssl)
+    if [ -f "$PREFIX/bin/openssl" ]; then
+        cp -f "$PREFIX/bin/openssl" "$DIST_DIR/"
+        echo "  [+] Copied openssl CLI"
+    fi
+
+    # 2. Shared Libraries (*.so / *.dylib)
+    if [ "$LABEL" == "Android" ]; then
+        # Android shared libs are unversioned
+        find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so" -exec cp -f {} "$DIST_DIR/" \; 2>/dev/null || true
+    else
+        # Linux & macOS: Only copy physical versioned libraries (prevent duplicate symlinks)
+        find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.so.*" -exec cp -f {} "$DIST_DIR/" \; 2>/dev/null || true
+        find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.so.*" -exec cp -f {} "$DIST_DIR/" \; 2>/dev/null || true
+        find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.*.dylib" -exec cp -f {} "$DIST_DIR/" \; 2>/dev/null || true
+        find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.*.dylib" -exec cp -f {} "$DIST_DIR/" \; 2>/dev/null || true
+    fi
+
+    # 3. Dynamic Engines & Providers
+    find "$PREFIX" -path "*/engines-*/*.so" -exec cp -f {} "$DIST_DIR/engines/" \; 2>/dev/null || true
+    find "$PREFIX" -path "*/engines-*/*.dylib" -exec cp -f {} "$DIST_DIR/engines/" \; 2>/dev/null || true
+    find "$PREFIX" -path "*/ossl-modules*/*.so" -exec cp -f {} "$DIST_DIR/providers/" \; 2>/dev/null || true
+    find "$PREFIX" -path "*/ossl-modules*/*.dylib" -exec cp -f {} "$DIST_DIR/providers/" \; 2>/dev/null || true
+
+    # 4. Strip Symbols (Linux and Android only; macOS stripping occurs during lipo)
+    if [ "$LABEL" != "macOS" ]; then
+        echo "✂️ Stripping debug symbols from shared binaries..."
+        find "$DIST_DIR" -maxdepth 1 -type f \( -name "openssl" -o -name "*.so*" \) -exec strip {} + 2>/dev/null || true
+        find "$DIST_DIR/engines" "$DIST_DIR/providers" -type f -name "*.so" -exec strip {} + 2>/dev/null || true
+    fi
+
+    # 5. Generate install_symlinks.sh from platform template
+    if [ "$LABEL" == "Linux" ] || [ "$LABEL" == "macOS" ]; then
+        echo "🔗 Generating install_symlinks.sh from template..."
+        CFG_DIR="${CONFIG_DIR:-$WS_DIR/config}"
+        SYMLINK_SCRIPT="$DIST_DIR/install_symlinks.sh"
+
+        if [ "$LABEL" == "Linux" ]; then
+            REAL_CRYPTO=$(find "$DIST_DIR" -maxdepth 1 -name "libcrypto.so.*" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            REAL_SSL=$(find "$DIST_DIR" -maxdepth 1 -name "libssl.so.*" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            TEMPLATE="$CFG_DIR/install_symlinks_linux.sh.template"
+        else
+            REAL_CRYPTO=$(find "$DIST_DIR" -maxdepth 1 -name "libcrypto.*.dylib" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            REAL_SSL=$(find "$DIST_DIR" -maxdepth 1 -name "libssl.*.dylib" -type f -exec basename {} \; 2>/dev/null | head -n 1)
+            TEMPLATE="$CFG_DIR/install_symlinks_macos.sh.template"
+        fi
+
+        if [ -n "$REAL_CRYPTO" ] && [ -n "$REAL_SSL" ] && [ -f "$TEMPLATE" ]; then
+            sed -e "s|{{REAL_CRYPTO_FILE}}|$REAL_CRYPTO|g" \
+                -e "s|{{REAL_SSL_FILE}}|$REAL_SSL|g" \
+                "$TEMPLATE" > "$SYMLINK_SCRIPT"
+            chmod +x "$SYMLINK_SCRIPT"
+            echo "  [+] Generated $SYMLINK_SCRIPT"
+        else
+            echo "⚠️ Warning: Could not find versioned libraries or template to generate $SYMLINK_SCRIPT"
+        fi
+    fi
+
 else
-    # Static builds: Attempt with no-apps (OpenSSL 3.2+), fallback to without no-apps (OpenSSL 3.0/3.1)
-    if ! ./Configure "$TARGET" no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"; then
-        echo "⚠️ 'no-apps' not supported in this OpenSSL version. Falling back without no-apps..."
-        ./Configure "$TARGET" no-shared no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"
+    echo "📦 Staging static archives (*.a)..."
+    # Static libraries
+    find "$PREFIX" -type f -name "*.a" -exec cp -f {} "$DIST_DIR/lib/static/" \; 2>/dev/null || true
+
+    # Strip symbols from static archives (Non-macOS)
+    if [ "$LABEL" != "macOS" ]; then
+        echo "✂️ Stripping static archives..."
+        find "$DIST_DIR/lib/static" -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
     fi
 fi
 
-# 5. Compile and Install Software
-NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
-echo "🔨 Compiling OpenSSL ($NPROC parallel jobs)..."
-make -j"$NPROC"
+# Clean up empty directories
+find "$DIST_DIR" -type d -empty -delete 2>/dev/null || true
 
-echo "📦 Installing software to $PREFIX..."
-make install_sw DESTDIR="/"
+# Assert that files were staged
+FILE_COUNT=$(find "$DIST_DIR" -type f | wc -l)
+if [ "$FILE_COUNT" -eq 0 ]; then
+    echo "FATAL: No files were staged into '$DIST_DIR'!"
+    exit 1
+fi
 
-echo "✅ POSIX compile and install completed successfully."
+echo "✅ Successfully organized $FILE_COUNT POSIX artifact(s) into '$DIST_DIR'."
 exit 0

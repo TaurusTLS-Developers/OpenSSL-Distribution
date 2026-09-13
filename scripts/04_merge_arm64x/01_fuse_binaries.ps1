@@ -21,12 +21,16 @@ $slicesDir  = Join-Path $wsDir "slices"
 # Locate MSVC Tools
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsPath  = & $vswhere -latest -property installationPath
-if (-not (Test-Path $vsPath)) { throw "FATAL: Visual Studio installation path could not be resolved!" }
+if ([string]::IsNullOrWhiteSpace($vsPath) -or -not (Test-Path $vsPath)) { 
+    throw "FATAL: Visual Studio installation path could not be resolved!" 
+}
 
 $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
 $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
   Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
-if (-not (Test-Path $dumpbin)) { throw "FATAL: Hostx64 dumpbin.exe not found!" }
+if ([string]::IsNullOrWhiteSpace($dumpbin) -or -not (Test-Path $dumpbin)) { 
+    throw "FATAL: Hostx64 dumpbin.exe not found!" 
+}
 
 # Initialize output directory structure
 New-Item -ItemType Directory -Force -Path `
@@ -34,15 +38,53 @@ New-Item -ItemType Directory -Force -Path `
   "$distShared\lib\import\arm64", "$distShared\lib\import\arm64ec", `
   "$distShared\engines", "$distShared\providers" | Out-Null
 
-# Resolve Slice Directories from $slicesDir
-$arm64Shared   = Get-ChildItem $slicesDir -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
-$arm64Static   = Get-ChildItem $slicesDir -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
-$arm64ecShared = Get-ChildItem $slicesDir -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
-$arm64ecStatic = Get-ChildItem $slicesDir -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
-
-if (-not $arm64Shared -or -not $arm64Static -or -not $arm64ecShared -or -not $arm64ecStatic) {
-  throw "FATAL: One or more slice directories were not found in $slicesDir!"
+Write-Host "=== Inspecting Slices in: $slicesDir ==="
+if (-not (Test-Path $slicesDir)) {
+    throw "FATAL: Slices directory '$slicesDir' does not exist! Artifact download step failed or path is wrong."
 }
+Get-ChildItem $slicesDir | ForEach-Object { Write-Host "  Found: $($_.Name)" }
+
+# Resolve Slice Directories (Explicitly excluding *arm64ec* to prevent accidental collisions)
+$arm64Shared   = Get-ChildItem $slicesDir -Directory | Where-Object { 
+    ($_.Name -like "*native-arm64*shared*" -or $_.Name -like "*arm64*shared*") -and $_.Name -notlike "*arm64ec*" 
+} | Select-Object -ExpandProperty FullName -First 1
+
+$arm64Static   = Get-ChildItem $slicesDir -Directory | Where-Object { 
+    ($_.Name -like "*native-arm64*static*" -or $_.Name -like "*arm64*static*") -and $_.Name -notlike "*arm64ec*" 
+} | Select-Object -ExpandProperty FullName -First 1
+
+$arm64ecShared = Get-ChildItem $slicesDir -Directory | Where-Object { 
+    $_.Name -like "*arm64ec*shared*" 
+} | Select-Object -ExpandProperty FullName -First 1
+
+$arm64ecStatic = Get-ChildItem $slicesDir -Directory | Where-Object { 
+    $_.Name -like "*arm64ec*static*" 
+} | Select-Object -ExpandProperty FullName -First 1
+
+Write-Host "`n=== Resolved Slices ==="
+Write-Host "  arm64Shared:   $arm64Shared"
+Write-Host "  arm64Static:   $arm64Static"
+Write-Host "  arm64ecShared: $arm64ecShared"
+Write-Host "  arm64ecStatic: $arm64ecStatic"
+
+# Strict assertions: Fail immediately with clear error if any slice is missing
+if (-not $arm64Shared)   { throw "FATAL: Could not find Native ARM64 Shared slice in $slicesDir!" }
+if (-not $arm64Static)   { throw "FATAL: Could not find Native ARM64 Static slice in $slicesDir!" }
+if (-not $arm64ecShared) { throw "FATAL: Could not find ARM64EC Shared slice in $slicesDir!" }
+if (-not $arm64ecStatic) { throw "FATAL: Could not find ARM64EC Static slice in $slicesDir!" }
+
+# Verify required input static libraries exist for both crypto and ssl before calling lib.exe
+$arm64StaticCrypto   = Join-Path $arm64Static "lib\static\libcrypto.lib"
+$arm64ecStaticCrypto = Join-Path $arm64ecStatic "lib\static\libcrypto.lib"
+$arm64StaticSsl      = Join-Path $arm64Static "lib\static\libssl.lib"
+$arm64ecStaticSsl    = Join-Path $arm64ecStatic "lib\static\libssl.lib"
+
+if (-not (Test-Path $arm64StaticCrypto))   { throw "FATAL: Native ARM64 static libcrypto not found: $arm64StaticCrypto" }
+if (-not (Test-Path $arm64ecStaticCrypto)) { throw "FATAL: ARM64EC static libcrypto not found: $arm64ecStaticCrypto" }
+if (-not (Test-Path $arm64StaticSsl))      { throw "FATAL: Native ARM64 static libssl not found: $arm64StaticSsl" }
+if (-not (Test-Path $arm64ecStaticSsl))    { throw "FATAL: ARM64EC static libssl not found: $arm64ecStaticSsl" }
+
+Write-Host "✅ All required static input archives verified."
 
 # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
 Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
