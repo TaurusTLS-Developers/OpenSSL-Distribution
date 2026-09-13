@@ -201,12 +201,6 @@ jobs:
   compile-binaries:
     name: Compile (${{ matrix.platform.label }} ${{ matrix.platform.arch }} ${{ matrix.linkage }})
     needs: validate-version
-    if: |
-      (matrix.platform.label == 'Windows' && inputs.build_windows != false) ||
-      (matrix.platform.label == 'Linux' && inputs.build_linux != false) ||
-      (matrix.platform.label == 'macOS' && inputs.build_macos != false) ||
-      (matrix.platform.label == 'Android' && inputs.build_android != false) ||
-      (matrix.platform.label == 'iOS' && inputs.build_ios != false)
     strategy:
       fail-fast: false
       matrix:
@@ -816,17 +810,6 @@ jobs:
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: |
-      always() &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      (
-        (matrix.label == 'Windows' && inputs.build_windows != false) ||
-        (matrix.label == 'Linux' && inputs.build_linux != false) ||
-        (matrix.label == 'macOS' && inputs.build_macos != false) ||
-        (matrix.label == 'Android' && inputs.build_android != false) ||
-        (matrix.label == 'iOS' && inputs.build_ios != false)
-      )
     strategy:
       fail-fast: false
       matrix:
@@ -875,23 +858,42 @@ jobs:
 
       # Step 5: Merge Binaries and Assets
       - name: Merge Binaries and Assets
-        if: matrix.label != 'macOS'
+        if: |
+          matrix.label != 'macOS' && 
+          (
+            (matrix.label == 'Windows' && inputs.build_windows != false) || 
+            (matrix.label == 'Linux' && inputs.build_linux != false) || 
+            (matrix.label == 'Android' && inputs.build_android != false) || 
+            (matrix.label == 'iOS' && inputs.build_ios != false)
+          )
         shell: bash
         run: bash ./scripts/08_package_release/01_merge_binaries.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 6: Organize & Lipo (macOS Universal)
       - name: Build macOS Universal Binaries
-        if: matrix.label == 'macOS'
+        if: matrix.label == 'macOS' && inputs.build_macos != false
         shell: bash
         run: bash ./scripts/08_package_release/02_build_macos_universal.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
       # Step 7: Finalize Package
       - name: Finalize Package
+        if: |
+          (matrix.label == 'Windows' && inputs.build_windows != false) ||
+          (matrix.label == 'Linux' && inputs.build_linux != false) ||
+          (matrix.label == 'macOS' && inputs.build_macos != false) ||
+          (matrix.label == 'Android' && inputs.build_android != false) ||
+          (matrix.label == 'iOS' && inputs.build_ios != false)
         shell: bash
         run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type || 'release' }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "${{ github.workspace }}/common-assets" "${{ github.workspace }}/dist" "${{ github.workspace }}"
 
       # Step 8: Upload Final Archive
       - name: Upload Final Archive
+        if: |
+          (matrix.label == 'Windows' && inputs.build_windows != false) ||
+          (matrix.label == 'Linux' && inputs.build_linux != false) ||
+          (matrix.label == 'macOS' && inputs.build_macos != false) ||
+          (matrix.label == 'Android' && inputs.build_android != false) ||
+          (matrix.label == 'iOS' && inputs.build_ios != false)
         uses: actions/upload-artifact@v7
         with:
           name: openssl-${{ needs.validate-version.outputs.artifact_version }}-${{ matrix.label }}-${{ matrix.arch }}
