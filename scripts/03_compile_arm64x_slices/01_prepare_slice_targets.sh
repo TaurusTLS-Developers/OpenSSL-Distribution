@@ -17,8 +17,8 @@ fi
 SRC_DIR="${1:-${SRC_DIR:-$DEFAULT_SRC}}"
 CFG_DIR="${2:-${CONFIG_DIR:-$WS_DIR/config}}"
 
-SRC_CONF="$CFG_DIR/99-arm64x-prep.conf"
-DEST_CONF="$SRC_DIR/Configurations/99-arm64x-prep.conf"
+SRC_CONF="$CFG_DIR/99-win-hybridcrt.conf"
+DEST_CONF="$SRC_DIR/Configurations/99-win-hybridcrt.conf"
 
 echo "================================================================"
 echo " [PREPARE-SLICE-TARGETS] Template:        $SRC_CONF"

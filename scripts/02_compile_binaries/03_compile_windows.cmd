@@ -68,17 +68,20 @@ if errorlevel 1 (
     exit /b %errorlevel%
 )
 
-echo [COMPILE-WIN] Running nmake...
-nmake
+echo [COMPILE] Building in parallel with jom (%NUMBER_OF_PROCESSORS% cores)...
+jom -j "%NUMBER_OF_PROCESSORS%"
 if errorlevel 1 (
-    echo [COMPILE-WIN] ERROR: nmake build failed.
+    echo FATAL: jom parallel compilation failed!
     exit /b %errorlevel%
 )
 
-echo [COMPILE-WIN] Running nmake install_sw...
+:: Ensure dummy PDB exists to prevent older OpenSSL 3.0 copy.pl crash on static builds
+if not exist ossl_static.pdb (type nul > ossl_static.pdb >nul 2>&1)
+
+echo [COMPILE] Installing software via nmake install_sw...
 nmake install_sw
 if errorlevel 1 (
-    echo [COMPILE-WIN] ERROR: nmake install_sw failed.
+    echo FATAL: nmake install_sw failed!
     exit /b %errorlevel%
 )
 
