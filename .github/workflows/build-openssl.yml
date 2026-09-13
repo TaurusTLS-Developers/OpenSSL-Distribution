@@ -320,7 +320,7 @@ jobs:
       # Step 4: Recursive Deep Verification of All ARM64X Binaries
       - name: Recursive Deep Verification of All ARM64X Binaries
         shell: pwsh
-        run: pwsh ./scripts/04_merge_arm64x/02_verify_arm64x.ps1 -DistDir "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/02_verify_arm64x.ps1 -DistDir "${{ github.workspace }}\raw_shared\dist"
 
       # Step 5: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
@@ -354,7 +354,7 @@ jobs:
       - name: Verify Signed Windows ARM64X Binaries
         if: steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
-        run: pwsh ./scripts/04_merge_arm64x/04_verify_signatures.ps1 -Folder "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_shared\dist"
 
       # Step 9: Upload Raw ARM64 Shared Artifact
       - name: Upload Raw ARM64 Shared Artifact
@@ -431,7 +431,7 @@ jobs:
       # Step 7: Stage Multi-Arch Redistributables
       - name: Stage Multi-Arch Redistributables
         shell: pwsh
-        run: pwsh ./scripts/05_innosetup_installer/02_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/05_innosetup_installer/02_stage_redist.ps1 -WorkspaceDir "${{ github.workspace }}"
 
       # Step 8: Install InnoSetup
       - name: Install InnoSetup
@@ -647,7 +647,7 @@ jobs:
       # Step 7: Stage Redistributables & Convert LICENSE to RTF
       - name: Stage Redistributables & Convert LICENSE to RTF
         shell: pwsh
-        run: pwsh ./scripts/07_wix_installers/02_stage_redist.ps1 -WorkspaceDir "$env:GITHUB_WORKSPACE"
+        run: pwsh ./scripts/07_wix_installers/02_stage_redist.ps1 -WorkspaceDir "${{ github.workspace }}"
 
       # Step 8: Build MSI with WiX
       - name: Build MSI with WiX
