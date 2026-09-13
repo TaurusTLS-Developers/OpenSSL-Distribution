@@ -61,24 +61,27 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [COMPILE-WIN] Running perl Configure %TARGET_NAME% --prefix="%TEMP_DIR%"
-perl Configure %TARGET_NAME% --prefix="%TEMP_DIR%"
+echo [COMPILE-WIN] Running: perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
+perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
 if errorlevel 1 (
-    echo [COMPILE-WIN] ERROR: Configure failed.
+    echo FATAL: OpenSSL Configure failed for target '%TARGET_NAME%'!
     exit /b %errorlevel%
 )
 
-echo [COMPILE] Building in parallel with jom (%NUMBER_OF_PROCESSORS% cores)...
+:: Neutralize obsolete PDB installation rule from generated makefile for /Z7 static builds
+perl -i -pe "s/.*ossl_static\.pdb.*//g" makefile
+if not exist ossl_static.pdb echo dummy > ossl_static.pdb
+
+echo [COMPILE-WIN] Building in parallel with jom (%NUMBER_OF_PROCESSORS% cores)...
 jom -j "%NUMBER_OF_PROCESSORS%"
 if errorlevel 1 (
     echo FATAL: jom parallel compilation failed!
     exit /b %errorlevel%
 )
 
-:: Ensure dummy PDB exists to prevent older OpenSSL 3.0 copy.pl crash on static builds
-if not exist ossl_static.pdb (type nul > ossl_static.pdb >nul 2>&1)
+if not exist ossl_static.pdb echo dummy > ossl_static.pdb
 
-echo [COMPILE] Installing software via nmake install_sw...
+echo [COMPILE-WIN] Installing software via nmake install_sw...
 nmake install_sw
 if errorlevel 1 (
     echo FATAL: nmake install_sw failed!
