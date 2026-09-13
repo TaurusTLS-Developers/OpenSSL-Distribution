@@ -14,9 +14,11 @@ $ErrorActionPreference = 'Stop'
 
 # Resolve workspace and target distribution directories
 $wsDir      = $WorkspaceDir
-$distShared = Join-Path $wsDir "raw_shared\dist"
-$distStatic = Join-Path $wsDir "raw_static\dist"
-$slicesDir  = Join-Path $wsDir "slices"
+$DistSharedDir = Join-Path $wsDir "raw_shared\dist"
+$DistStaticDir = Join-Path $wsDir "raw_static\dist"
+$distShared    = $DistSharedDir
+$distStatic    = $DistStaticDir
+$slicesDir     = Join-Path $wsDir "slices"
 
 # Locate MSVC Tools
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
