@@ -182,27 +182,32 @@ jobs:
         shell: bash
         run: bash ./scripts/02_compile_binaries/02_prepare_win_targets.sh "${{ github.workspace }}/openssl-src"
 
-      # Step 5: Compile and Stage Windows Binaries
+      # Step 5: Install JOM (Parallel Build Tool)
+      - name: Install JOM (Parallel Build Tool)
+        if: matrix.platform.label == 'Windows'
+        run: choco install jom --no-progress -y
+
+      # Step 6: Compile and Stage Windows Binaries
       - name: Compile and Stage Windows Binaries
         if: matrix.platform.label == 'Windows'
         shell: cmd
         run: call scripts\02_compile_binaries\03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\raw_artifact\dist"
 
-      # Step 6: Check for Windows Binaries to Sign
+      # Step 7: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
         if: matrix.platform.label == 'Windows'
         id: check_binaries
         shell: pwsh
         run: pwsh ./scripts/02_compile_binaries/04_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
-      # Step 7: Azure Login
+      # Step 8: Azure Login
       - name: Azure Login
         if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      # Step 8: Sign Windows Binaries (Azure Artifact Signing)
+      # Step 9: Sign Windows Binaries (Azure Artifact Signing)
       - name: Sign Windows Binaries (Azure Artifact Signing)
         if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
@@ -217,30 +222,30 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      # Step 9: Verify Signed Windows Binaries
+      # Step 10: Verify Signed Windows Binaries
       - name: Verify Signed Windows Binaries
         if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
         run: pwsh ./scripts/02_compile_binaries/05_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
-      # Step 10: Install Linux Dependencies
+      # Step 11: Install Linux Dependencies
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
         run: bash ./scripts/02_compile_binaries/06_install_linux_deps.sh "${{ matrix.platform.arch }}"
 
-      # Step 11: Compile Unix (POSIX)
+      # Step 12: Compile Unix (POSIX)
       - name: Compile Unix (POSIX)
         if: matrix.platform.label != 'Windows'
         shell: bash
         run: bash ./scripts/02_compile_binaries/07_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ github.workspace }}/openssl-src" "${{ github.workspace }}/raw_artifact/usr/local" "${{ matrix.platform.minos || '' }}" "${{ matrix.platform.api || '' }}"
 
-      # Step 12: Organize Unix Binaries
+      # Step 13: Organize Unix Binaries
       - name: Organize Unix Binaries
         if: matrix.platform.label != 'Windows'
         shell: bash
         run: bash ./scripts/02_compile_binaries/08_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist"
 
-      # Step 13: Upload Raw Artifact
+      # Step 14: Upload Raw Artifact
       - name: Upload Raw Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -280,12 +285,16 @@ jobs:
         shell: bash
         run: bash ./scripts/03_compile_arm64x_slices/01_prepare_slice_targets.sh "${{ github.workspace }}/openssl-src"
 
-      # Step 4: Compile and Stage Slice Binaries
+      # Step 4: Install JOM (Parallel Build Tool)
+      - name: Install JOM (Parallel Build Tool)
+        run: choco install jom --no-progress -y
+
+      # Step 5: Compile and Stage Slice Binaries
       - name: Compile and Stage Slice Binaries
         shell: cmd
         run: call scripts\03_compile_arm64x_slices\02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\slice_out"
 
-      # Step 5: Upload Slice Artifact
+      # Step 6: Upload Slice Artifact
       - name: Upload Slice Artifact
         uses: actions/upload-artifact@v7
         with:
