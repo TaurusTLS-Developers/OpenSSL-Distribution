@@ -74,7 +74,6 @@ if errorlevel 1 (
 )
 
 :: Neutralize obsolete PDB installation rule from generated makefile for /Z7 static builds
-perl -i -pe "s/.*ossl_static\.pdb.*//g" makefile
 if not exist ossl_static.pdb echo dummy > ossl_static.pdb
 
 :: 7. Build and Install
