@@ -191,7 +191,7 @@ jobs:
       - name: Compile and Stage Windows Binaries
         if: matrix.platform.label == 'Windows'
         shell: cmd
-        run: call scripts\02_compile_binaries\03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\raw_artifact\dist"
+        run: call scripts\02_compile_binaries\03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\raw_artifact\dist" || exit /b %errorlevel%
 
       # Step 7: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
@@ -292,7 +292,7 @@ jobs:
       # Step 5: Compile and Stage Slice Binaries
       - name: Compile and Stage Slice Binaries
         shell: cmd
-        run: call scripts\03_compile_arm64x_slices\02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\slice_out"
+        run: call scripts\03_compile_arm64x_slices\02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\slice_out" || exit /b %errorlevel%
 
       # Step 6: Upload Slice Artifact
       - name: Upload Slice Artifact

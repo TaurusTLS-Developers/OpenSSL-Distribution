@@ -4,18 +4,19 @@ set -euo pipefail
 # =========================================================================
 # Script: 01_prepare_slice_targets.sh
 # Job:    03_compile_arm64x_slices
-# Desc:   Copies config/99-arm64x-prep.conf into openssl-src/Configurations/
-#         and resolves the __DOCS__ placeholder based on OpenSSL version.
+# Desc:   Copies config/99-win-hybridcrt.conf into openssl-src/Configurations/
 # =========================================================================
 
-WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
-DEFAULT_SRC="$WS_DIR/openssl-src"
-if [ ! -d "$DEFAULT_SRC" ]; then
-    DEFAULT_SRC="$WS_DIR"
-fi
+RAW_SRC="${1:-${SRC_DIR:-${GITHUB_WORKSPACE:-$PWD}/openssl-src}}"
+RAW_CFG="${2:-${CONFIG_DIR:-${GITHUB_WORKSPACE:-$PWD}/config}}"
 
-SRC_DIR="${1:-${SRC_DIR:-$DEFAULT_SRC}}"
-CFG_DIR="${2:-${CONFIG_DIR:-$WS_DIR/config}}"
+SRC_DIR="${RAW_SRC//\\//}"
+CFG_DIR="${RAW_CFG//\\//}"
+
+if [ ! -d "$SRC_DIR" ]; then
+    SRC_DIR="${GITHUB_WORKSPACE:-$PWD}"
+    SRC_DIR="${SRC_DIR//\\//}"
+fi
 
 SRC_CONF="$CFG_DIR/99-win-hybridcrt.conf"
 DEST_CONF="$SRC_DIR/Configurations/99-win-hybridcrt.conf"
@@ -36,10 +37,10 @@ if [ ! -d "$SRC_DIR/Configurations" ]; then
     exit 1
 fi
 
-# 1. Copy committed config from config/
+# 1. Copy config
 cp -f "$SRC_CONF" "$DEST_CONF"
 
-# 2. Dynamically check if 'no-docs' is supported by this OpenSSL version
+# 2. Check 'no-docs' support
 INSTALL_DOC="$SRC_DIR/INSTALL.md"
 if [ -f "$INSTALL_DOC" ] && grep -q "no-docs" "$INSTALL_DOC"; then
     echo "  [+] Feature 'docs' is supported. Disabling it in config."
@@ -49,11 +50,10 @@ else
     sed -i 's/"__DOCS__"//g' "$DEST_CONF"
 fi
 
-# 3. Final validation
 if [ ! -s "$DEST_CONF" ]; then
     echo "FATAL: Destination config '$DEST_CONF' is missing or empty!"
     exit 1
 fi
 
-echo "✅ Successfully deployed 99-arm64x-prep.conf from config/."
+echo "✅ Successfully deployed 99-win-hybridcrt.conf to $DEST_CONF"
 exit 0
