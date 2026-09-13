@@ -105,6 +105,17 @@ else
     ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
 fi
 
+# 5. Stage version.txt for build-metadata
+METADATA_DIR="${RUNNER_TEMP:-/tmp}/build-metadata"
+mkdir -p "$METADATA_DIR"
+
+if [ "$BUILD_TYPE" == "branch" ]; then
+    echo "branch: $SLUGIFIED_VERSION" > "$METADATA_DIR/version.txt"
+else
+    echo "$SLUGIFIED_VERSION" > "$METADATA_DIR/version.txt"
+fi
+echo "✅ Staged version.txt for build-metadata: $(cat "$METADATA_DIR/version.txt")"
+
 echo "================================================================"
 echo " [VALIDATE-VERSION] Resolved SHA:        $SHA"
 echo " [VALIDATE-VERSION] Target Ref:          $TARGET_REF"

@@ -4,18 +4,54 @@ run-name: Build OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'OpenSSL Version or Branch (e.g. 3.6.2, master)'
+        required: true
+        type: string
+        default: ''
       build_type:
-        description: 'Build Source: OpenSSL Release or OpenSSL Branch/OpenSSL fork'
+        description: 'Build Source'
         required: true
         type: choice
         options:
           - release
           - branch
         default: release
-      version:
-        description: 'OpenSSL Release Version, OpenSSL Branch Name or OpenSSL Fork Repo(e.g. 3.4.0, master, or user/repo/branch)'
-        required: true
-        type: string
+      sign_binaries:
+        description: 'Sign Windows binaries & installers (Azure Trusted Signing)'
+        required: false
+        type: boolean
+        default: false
+      build_installers:
+        description: 'Build Windows Installers (InnoSetup EXE, MSIX, WiX MSI)'
+        required: false
+        type: boolean
+        default: false
+      build_windows:
+        description: 'Target: Windows (x64, x86, ARM64/ARM64X)'
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Target: Linux (x64, arm64)'
+        required: false
+        type: boolean
+        default: true
+      build_macos:
+        description: 'Target: macOS Universal (x86_64 + arm64)'
+        required: false
+        type: boolean
+        default: true
+      build_android:
+        description: 'Target: Android (arm64, arm)'
+        required: false
+        type: boolean
+        default: true
+      build_ios:
+        description: 'Target: iOS (arm64, sim-arm64)'
+        required: false
+        type: boolean
+        default: true
       ignore_eol:
         description: 'Ignore EOL Check'
         required: false
@@ -26,15 +62,44 @@ on:
         required: false
         type: boolean
         default: false
+
   workflow_call:
     inputs:
+      version:
+        required: true
+        type: string
       build_type:
         required: false
         type: string
         default: release
-      version:
-        required: true
-        type: string
+      sign_binaries:
+        required: false
+        type: boolean
+        default: false
+      build_installers:
+        required: false
+        type: boolean
+        default: false
+      build_windows:
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        required: false
+        type: boolean
+        default: true
+      build_macos:
+        required: false
+        type: boolean
+        default: true
+      build_android:
+        required: false
+        type: boolean
+        default: true
+      build_ios:
+        required: false
+        type: boolean
+        default: true
       ignore_eol:
         required: false
         type: boolean
@@ -84,6 +149,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./scripts/00_validate_version/01_check_eol.sh "${{ inputs.version }}" "${{ inputs.build_type }}" "${{ inputs.ignore_eol }}"
 
+      # Step 3: Upload Build Metadata (Universal)
+      - name: Upload Build Metadata (Universal)
+        if: needs.validate-version.outputs.is_fork == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-metadata
+          path: ${{ runner.temp }}/build-metadata/
+          retention-days: 5
+
   # =========================================================================
   # 1. BUILD COMMON ASSETS (Headers & Docs)
   # =========================================================================
@@ -127,6 +201,12 @@ jobs:
   compile-binaries:
     name: Compile (${{ matrix.platform.label }} ${{ matrix.platform.arch }} ${{ matrix.linkage }})
     needs: validate-version
+    if: |
+      (matrix.platform.label == 'Windows' && inputs.build_windows != false) ||
+      (matrix.platform.label == 'Linux' && inputs.build_linux != false) ||
+      (matrix.platform.label == 'macOS' && inputs.build_macos != false) ||
+      (matrix.platform.label == 'Android' && inputs.build_android != false) ||
+      (matrix.platform.label == 'iOS' && inputs.build_ios != false)
     strategy:
       fail-fast: false
       matrix:
@@ -165,7 +245,7 @@ jobs:
 
       # Step 3: Validate Azure Code Signing Secrets (Windows)
       - name: Validate Azure Code Signing Secrets
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true
         shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -195,21 +275,21 @@ jobs:
 
       # Step 7: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true
         id: check_binaries
         shell: pwsh
         run: pwsh ./scripts/02_compile_binaries/04_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
       # Step 8: Azure Login
       - name: Azure Login
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       # Step 9: Sign Windows Binaries (Azure Artifact Signing)
       - name: Sign Windows Binaries (Azure Artifact Signing)
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -224,7 +304,7 @@ jobs:
 
       # Step 10: Verify Signed Windows Binaries
       - name: Verify Signed Windows Binaries
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
         run: pwsh ./scripts/02_compile_binaries/05_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
@@ -259,6 +339,7 @@ jobs:
   compile-windows-arm64x-slices:
     name: Compile Windows ARM64X Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
     needs: validate-version
+    if: inputs.build_windows != false
     strategy:
       fail-fast: false
       matrix:
@@ -308,6 +389,7 @@ jobs:
   merge-windows-arm64x:
     name: Merge & Link ARM64X Binaries
     needs: [validate-version, compile-windows-arm64x-slices]
+    if: inputs.build_windows != false
     runs-on: windows-latest
     steps:
       # Step 1: Checkout Orchestrator Repository
@@ -333,20 +415,21 @@ jobs:
 
       # Step 5: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
+        if: inputs.sign_binaries == true
         id: check_binaries
         shell: pwsh
         run: pwsh ./scripts/04_merge_arm64x/03_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_shared\dist"
 
       # Step 6: Azure Login
       - name: Azure Login
-        if: steps.check_binaries.outputs.has_binaries == 'true'
+        if: inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       # Step 7: Sign Windows ARM64X Binaries
       - name: Sign Windows ARM64X Binaries
-        if: steps.check_binaries.outputs.has_binaries == 'true'
+        if: inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -387,7 +470,11 @@ jobs:
   InnoSetup-windows-installer:
     name: Inno Setup Windows Multi-Arch Installer
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    # Execute ONLY if installers and Windows target are enabled:
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows != false &&
+      needs.validate-version.outputs.is_fork == 'false'
     runs-on: windows-latest
     permissions:
       id-token: write
@@ -399,6 +486,7 @@ jobs:
 
       # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -462,12 +550,14 @@ jobs:
 
       # Step 10: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       # Step 11: Sign Installer (Azure Artifact Signing)
       - name: Sign Installer (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -482,6 +572,7 @@ jobs:
 
       # Step 12: Verify Signed Installer
       - name: Verify Signed Installer
+        if: inputs.sign_binaries == true
         shell: pwsh
         run: pwsh ./scripts/05_innosetup_installer/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
@@ -500,7 +591,10 @@ jobs:
   msix-windows-installers:
     name: Windows MSIX Framework (${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows != false &&
+      needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -519,6 +613,7 @@ jobs:
 
       # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -558,12 +653,14 @@ jobs:
 
       # Step 6: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       # Step 7: Sign MSIX Package (Azure Artifact Signing)
       - name: Sign MSIX Package (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -578,6 +675,7 @@ jobs:
 
       # Step 8: Verify Signed MSIX Package
       - name: Verify Signed MSIX Package
+        if: inputs.sign_binaries == true
         shell: pwsh
         run: pwsh ./scripts/06_msix_installers/03_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
@@ -596,7 +694,10 @@ jobs:
   wix-windows-installers:
     name: Windows MSI (${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows != false &&
+      needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -615,6 +716,7 @@ jobs:
 
       # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -673,12 +775,14 @@ jobs:
 
       # Step 9: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       # Step 10: Sign MSI (Azure Artifact Signing)
       - name: Sign MSI (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -693,6 +797,7 @@ jobs:
 
       # Step 11: Verify Signed MSI
       - name: Verify Signed MSI
+        if: inputs.sign_binaries == true
         shell: pwsh
         run: pwsh ./scripts/07_wix_installers/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
@@ -711,6 +816,17 @@ jobs:
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      (
+        (matrix.label == 'Windows' && inputs.build_windows != false) ||
+        (matrix.label == 'Linux' && inputs.build_linux != false) ||
+        (matrix.label == 'macOS' && inputs.build_macos != false) ||
+        (matrix.label == 'Android' && inputs.build_android != false) ||
+        (matrix.label == 'iOS' && inputs.build_ios != false)
+      )
     strategy:
       fail-fast: false
       matrix:
@@ -781,15 +897,6 @@ jobs:
           name: openssl-${{ needs.validate-version.outputs.artifact_version }}-${{ matrix.label }}-${{ matrix.arch }}
           path: ${{ env.ARCHIVE_FILE }}
           archive: false
-          retention-days: 5
-
-      # Step 9: Upload Build Metadata (Once)
-      - name: Upload Build Metadata (Once)
-        if: matrix.label == 'Linux' && matrix.arch == 'x64' && needs.validate-version.outputs.is_fork == 'false'
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-metadata
-          path: dist/version.txt
           retention-days: 5
 
   # =========================================================================

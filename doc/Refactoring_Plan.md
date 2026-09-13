@@ -138,11 +138,14 @@ Update `.github/workflows/build-openssl.yml` with the following input schema:
 - [ ] **3.4** Validate local execution of individual steps on developer workstation.
 
 ### Phase 4: Workflow Orchestrator Integration (`build-openssl.yml`)
-- [ ] **4.1** Add new workflow inputs (`sign_binaries`, `build_installers`, `platforms`).
-- [ ] **4.2** Add platform filtering conditions to matrix jobs based on `inputs.platforms`.
+- [ ] **4.1** Define boolean UI checkbox inputs (`sign_binaries`, `build_installers`, `build_windows`, `build_linux`, `build_macos`, `build_android`, `build_ios`) for `workflow_dispatch` and `workflow_call`.
+- [ ] **4.2** Decouple `build-metadata` (`version.txt`) from `package-release (Linux x64)` and move it to `validate-version` (guarantees release metadata exists even for Windows-only or single-platform builds).
 - [ ] **4.3** Add conditional gates for signing steps (`inputs.sign_binaries == true`).
-- [ ] **4.4** Add conditional gates for installer jobs (`inputs.build_installers == true`).
-- [x] **4.5** Update all job steps to execute the modular scripts from their new 2-digit paths.
+- [ ] **4.4** Add conditional gates for installer jobs (`inputs.build_installers == true && inputs.build_windows == true`).
+- [ ] **4.5** Add platform matrix filter gates across `compile-binaries`, `compile-windows-arm64x-slices`, and `package-release`.
+- [ ] **4.6** Implement preset kick-start workflow (`build-for-release.yml`) with single `version` input.
+- [ ] **4.7** Update `check-upstream.yml` to dispatch builds with all targets, signing, and installers enabled.
+- [ ] **4.8** Verify `publish-release.yml` resilience against partial builds.
 
 ### Phase 5: Documentation & Validation
 - [ ] **5.1** Update `MAINTAINING.md` and `README.md` with complete architecture details.
