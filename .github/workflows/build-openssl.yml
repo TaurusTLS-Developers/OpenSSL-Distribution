@@ -209,13 +209,13 @@ jobs:
   # 2. COMPILE BINARIES (Fan-Out Matrix)
   # =========================================================================
   compile-binaries:
-    name: Compile (${{ matrix.label }} ${{ matrix.arch }} ${{ matrix.linkage }})
+    name: Compile (${{ matrix.platform.label }} ${{ matrix.platform.arch }} ${{ matrix.linkage }})
     needs: validate-version
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.validate-version.outputs.compile_matrix) }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform.os }}
     permissions:
       id-token: write
       contents: read

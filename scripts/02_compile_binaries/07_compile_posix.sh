@@ -7,16 +7,23 @@ set -euo pipefail
 # Desc:   Configures and compiles OpenSSL for Linux, macOS, Android, and iOS.
 # =========================================================================
 
-# 1. Parameter resolution with intelligent defaults
-LABEL="${1:-${TARGET_PLATFORM:-Linux}}"
-TARGET="${2:-${TARGET_NAME:-linux-x86_64}}"
-LINKAGE="${3:-${TARGET_LINKAGE:-shared}}"
-WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
-SRC_DIR="${4:-${OPENSSL_SRC:-$WS_DIR/openssl-src}}"
-if [ ! -d "$SRC_DIR" ]; then
-    SRC_DIR="$WS_DIR"
+# 1. Parameter resolution (Fail fast if mandatory arguments are missing)
+LABEL="${1:-${TARGET_PLATFORM:-}}"
+TARGET="${2:-${TARGET_NAME:-}}"
+LINKAGE="${3:-${TARGET_LINKAGE:-}}"
+
+if [ -z "$LABEL" ] || [ -z "$TARGET" ] || [ -z "$LINKAGE" ]; then
+    echo "FATAL: Missing mandatory parameters! (LABEL='$LABEL', TARGET='$TARGET', LINKAGE='$LINKAGE')"
+    exit 1
 fi
 
+WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
+DEFAULT_SRC="$WS_DIR/openssl-src"
+if [ ! -d "$DEFAULT_SRC" ]; then
+    DEFAULT_SRC="$WS_DIR"
+fi
+
+SRC_DIR="${4:-${OPENSSL_SRC:-$DEFAULT_SRC}}"
 PREFIX="${5:-${TARGET_PREFIX:-$WS_DIR/raw_artifact/usr/local}}"
 MINOS="${6:-${TARGET_MINOS:-}}"
 API="${7:-${TARGET_API:-21}}"
@@ -36,7 +43,7 @@ if [ ! -f "$SRC_DIR/Configure" ]; then
     exit 1
 fi
 
-# Ensure PREFIX is an absolute path (mandatory for OpenSSL)
+# Ensure PREFIX is an absolute path
 mkdir -p "$PREFIX"
 PREFIX="$(cd "$PREFIX" && pwd)"
 
@@ -47,21 +54,24 @@ EXTRA_FLAGS=""
 
 # 3. Platform-Specific Setup
 case "$LABEL" in
-    macOS)
-        if [ -n "$MINOS" ]; then
-            EXTRA_FLAGS="-mmacosx-version-min=$MINOS"
-        fi
-        ;;
     Linux)
-        # Pass '\$\$ORIGIN' so Make turns it into literal '$ORIGIN' in RUNPATH
+        # Enable SCTP and relative RPATH only for Linux
         EXTRA_FLAGS="enable-sctp -Wl,-rpath,'\$\$ORIGIN'"
         if [ "$TARGET" == "linux-aarch64" ]; then
             export CROSS_COMPILE="aarch64-linux-gnu-"
             echo "  [+] Set CROSS_COMPILE=aarch64-linux-gnu-"
         fi
         ;;
+    macOS)
+        # Explicitly disable SCTP on macOS
+        EXTRA_FLAGS="no-sctp"
+        if [ -n "$MINOS" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS -mmacosx-version-min=$MINOS"
+        fi
+        ;;
     Android)
-        # Idempotent: Patch 16K max-page-size only once
+        # Explicitly disable SCTP on Android and ensure 16K alignment
+        EXTRA_FLAGS="no-sctp"
         ANDROID_CONF="Configurations/15-android.conf"
         if [ -f "$ANDROID_CONF" ] && ! grep -q "max-page-size" "$ANDROID_CONF"; then
             echo "  [+] Injecting 16K page alignment (-Wl,-z,max-page-size=16384) into $ANDROID_CONF"
@@ -75,21 +85,22 @@ case "$LABEL" in
         fi
         export ANDROID_NDK_ROOT="$NDK_ROOT"
         export PATH="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-        echo "  [+] Android NDK configured: $NDK_ROOT"
         ;;
     iOS)
+        # Explicitly disable SCTP on iOS (sctp headers do not exist on iOS)
+        EXTRA_FLAGS="no-sctp"
         XCODE_DEV="$(xcode-select -print-path)"
         if [[ "$TARGET" == *"simulator"* ]]; then
             export CROSS_TOP="$XCODE_DEV/Platforms/iPhoneSimulator.platform/Developer"
             export CROSS_SDK="iPhoneSimulator.sdk"
             if [ -n "$MINOS" ]; then
-                EXTRA_FLAGS="-mios-simulator-version-min=$MINOS"
+                EXTRA_FLAGS="$EXTRA_FLAGS -mios-simulator-version-min=$MINOS"
             fi
         else
             export CROSS_TOP="$XCODE_DEV/Platforms/iPhoneOS.platform/Developer"
             export CROSS_SDK="iPhoneOS.sdk"
             if [ -n "$MINOS" ]; then
-                EXTRA_FLAGS="-miphoneos-version-min=$MINOS"
+                EXTRA_FLAGS="$EXTRA_FLAGS -miphoneos-version-min=$MINOS"
             fi
         fi
         echo "  [+] iOS Toolchain configured: $CROSS_SDK ($CROSS_TOP)"
@@ -103,17 +114,15 @@ esac
 # 4. Run OpenSSL Configure
 echo "⚙️ Configuring OpenSSL for $TARGET ($LINKAGE)..."
 if [ "$LINKAGE" == "shared" ]; then
-    # Shared builds enable tests exclusion
     ./Configure "$TARGET" shared no-tests $EXTRA_FLAGS --prefix="$PREFIX"
 else
-    # Static builds: Attempt with no-apps (OpenSSL 3.2+), fallback to without no-apps (OpenSSL 3.0/3.1)
     if ! ./Configure "$TARGET" no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"; then
         echo "⚠️ 'no-apps' not supported in this OpenSSL version. Falling back without no-apps..."
         ./Configure "$TARGET" no-shared no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"
     fi
 fi
 
-# 5. Compile and Install Software
+# 5. Compile and Install
 NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 echo "🔨 Compiling OpenSSL ($NPROC parallel jobs)..."
 make -j"$NPROC"
@@ -121,5 +130,5 @@ make -j"$NPROC"
 echo "📦 Installing software to $PREFIX..."
 make install_sw DESTDIR="/"
 
-echo "✅ POSIX compile and install completed successfully."
+echo "✅ POSIX compile and install completed successfully for $LABEL ($TARGET)."
 exit 0
