@@ -4,18 +4,54 @@ run-name: Build OpenSSL ${{ inputs.version }} via ${{ github.event_name }}
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'OpenSSL Version or Branch (e.g. 3.6.2, master)'
+        required: true
+        type: string
+        default: ''
       build_type:
-        description: 'Build Source: OpenSSL Release or OpenSSL Branch/OpenSSL fork'
+        description: 'Build Source'
         required: true
         type: choice
         options:
           - release
           - branch
         default: release
-      version:
-        description: 'OpenSSL Release Version, OpenSSL Branch Name or OpenSSL Fork Repo(e.g. 3.4.0, master, or user/repo/branch)'
-        required: true
-        type: string
+      sign_binaries:
+        description: 'Sign Windows binaries & installers (Azure Trusted Signing)'
+        required: false
+        type: boolean
+        default: false
+      build_installers:
+        description: 'Build Windows Installers (InnoSetup EXE, MSIX, WiX MSI)'
+        required: false
+        type: boolean
+        default: false
+      build_windows:
+        description: 'Target: Windows (x64, x86, ARM64/ARM64X)'
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Target: Linux (x64, arm64)'
+        required: false
+        type: boolean
+        default: true
+      build_macos:
+        description: 'Target: macOS Universal (x86_64 + arm64)'
+        required: false
+        type: boolean
+        default: true
+      build_android:
+        description: 'Target: Android (arm64, arm)'
+        required: false
+        type: boolean
+        default: true
+      build_ios:
+        description: 'Target: iOS (arm64, sim-arm64)'
+        required: false
+        type: boolean
+        default: true
       ignore_eol:
         description: 'Ignore EOL Check'
         required: false
@@ -26,15 +62,44 @@ on:
         required: false
         type: boolean
         default: false
+
   workflow_call:
     inputs:
+      version:
+        required: true
+        type: string
       build_type:
         required: false
         type: string
         default: release
-      version:
-        required: true
-        type: string
+      sign_binaries:
+        required: false
+        type: boolean
+        default: false
+      build_installers:
+        required: false
+        type: boolean
+        default: false
+      build_windows:
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        required: false
+        type: boolean
+        default: true
+      build_macos:
+        required: false
+        type: boolean
+        default: true
+      build_android:
+        required: false
+        type: boolean
+        default: true
+      build_ios:
+        required: false
+        type: boolean
+        default: true
       ignore_eol:
         required: false
         type: boolean
@@ -43,6 +108,15 @@ on:
         required: false
         type: boolean
         default: false
+
+env:
+  SCRIPTS_DIR: ${{ github.workspace }}/scripts
+  COMMON_SCRIPTS_DIR: ${{ github.workspace }}/scripts/common
+  CONFIG_DIR: ${{ github.workspace }}/config
+  ASSETS_DIR: ${{ github.workspace }}/assets
+  REDIST_DIR: ${{ github.workspace }}/redist
+  INSTALLERS_DIR: ${{ github.workspace }}/installers
+  COMMON_ASSETS_DIR: ${{ github.workspace }}/common-assets
 
 jobs:
   # =========================================================================
@@ -57,102 +131,42 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       major_minor: ${{ steps.check.outputs.major_minor }}
       inno_app_id: ${{ steps.check.outputs.inno_app_id }}
+      compile_matrix: ${{ steps.check.outputs.compile_matrix }}
+      package_matrix: ${{ steps.check.outputs.package_matrix }}
       target_repo: ${{ steps.check.outputs.target_repo }}
       ref: ${{ steps.check.outputs.ref }}
       sha: ${{ steps.check.outputs.sha }}
       artifact_version: ${{ steps.check.outputs.artifact_version }}
       slugified_version: ${{ steps.check.outputs.slugified_version }}
-      is_fork: ${{ steps.check.outputs.is_fork }}
+      is_fork: ${{ steps.check.outputs.is_fork }}      
     steps:
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Check EOL or Branch Existence
       - name: Check EOL or Branch Existence
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ inputs.version }}"
-          BUILD_TYPE="${{ inputs.build_type }}"
-          IGNORE_EOL="${{ inputs.ignore_eol }}"
-          
-          TARGET_REPO="openssl/openssl"
-          IS_FORK="false"
-          
-          if [ "$BUILD_TYPE" == "release" ]; then
-           MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
-            EOL_DATE=$(curl -s  https://raw.githubusercontent.com/openssl/release-metadata/refs/heads/main/data.json | jq -r ".[\"$MAJOR_MINOR\"].eol")
-            EOL_DATE=$(echo "$EOL_DATE" | date -d "$EOL_DATE" +%s 2>/dev/null || date -d "01 $EOL_DATE" +%s 2>/dev/null || echo 0)
+          BUILD_WINDOWS: ${{ inputs.build_windows }}
+          BUILD_LINUX: ${{ inputs.build_linux }}
+          BUILD_MACOS: ${{ inputs.build_macos }}
+          BUILD_ANDROID: ${{ inputs.build_android }}
+          BUILD_IOS: ${{ inputs.build_ios }}
+          SIGN_BINARIES: ${{ inputs.sign_binaries }}
+          BUILD_INSTALLERS: ${{ inputs.build_installers }}
+          KEEP_RAW_ARTIFACTS: ${{ inputs.keep_raw_artifacts }}
+        run: bash ./scripts/00_validate_version/01_check_eol.sh "${{ inputs.version }}" "${{ inputs.build_type }}" "${{ inputs.ignore_eol }}"
 
-            if [ -z "$EOL_DATE" ] || [ "$EOL_DATE" == "null" ]; then
-              echo "⚠️ Could not determine EOL date for $MAJOR_MINOR. Proceeding cautiously."
-            else
-              TODAY=$(date +%s)
-              if [[ "$TODAY" > "$EOL_DATE" ]]; then
-                echo "❌ OpenSSL $MAJOR_MINOR reached EOL on $(date -d "@$EOL_DATE" +%Y-%m-%d) ."
-                if [ "$IGNORE_EOL" != "true" ]; then
-                  echo "Aborting build. Check 'Ignore EOL' to override."
-                  exit 1
-                fi
-                echo "⚠️ Ignore EOL is checked. Proceeding anyway."
-              fi
-            fi
-            TARGET_REF="openssl-$VERSION"
-
-            echo "🔍 Resolving SHA for tag '$TARGET_REF'..."
-            SHA=$(git ls-remote --tags https://github.com/$TARGET_REPO.git "$TARGET_REF" | awk '{print $1}')
-            if [ -z "$SHA" ]; then
-              echo "❌ Tag '$TARGET_REF' not found in $TARGET_REPO."
-              exit 1
-            fi
-            
-            ARTIFACT_VERSION="$VERSION"
-            SLUGIFIED_VERSION="$VERSION"
-          else
-            # Branch Mode
-            if [[ "$VERSION" == */*/* ]]; then
-              # Format: user/repo/branch
-              TARGET_REPO=$(echo "$VERSION" | cut -d'/' -f1,2)
-              TARGET_REF=$(echo "$VERSION" | cut -d'/' -f3-)
-              IS_FORK="true"
-            else
-              TARGET_REF="$VERSION"
-            fi
-            
-            echo "🔍 Resolving SHA for branch/ref '$TARGET_REF' in repository '$TARGET_REPO'..."
-            SHA=$(git ls-remote https://github.com/$TARGET_REPO.git "$TARGET_REF" | awk '{print $1}')
-            
-            if [ -z "$SHA" ]; then
-              # Check if it's already a SHA
-              if [[ "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; then
-                SHA="$TARGET_REF"
-              else
-                echo "❌ Reference '$TARGET_REF' does not exist in $TARGET_REPO."
-                exit 1
-              fi
-            fi
-            
-            TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-            # Slugify the whole version input (e.g. user/repo/branch -> user_repo_branch)
-            SLUGIFIED_VERSION=$(echo "$VERSION" | sed 's/\//_/g')
-            # Truncate for filename safety
-            SAFE_PART=$(echo "$SLUGIFIED_VERSION" | cut -c 1-100)
-            ARTIFACT_VERSION="${SAFE_PART}_${TIMESTAMP}"
-          fi
-
-          # Extract Major.Minor (e.g. 3.0, 3.5, 4.0)
-          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
-          
-          # Generate deterministic RFC 4122 UUIDv5 for InnoSetup AppId
-          INNO_APP_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, 'taurustls.openssl.inno.$MAJOR_MINOR'))" | tr '[:lower:]' '[:upper:]')
-          
-          # Output resolved information
-          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
-          echo "inno_app_id=$INNO_APP_ID" >> $GITHUB_OUTPUT
-          echo "target_repo=$TARGET_REPO" >> $GITHUB_OUTPUT
-          echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
-          echo "ref=$TARGET_REF" >> $GITHUB_OUTPUT
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
-          echo "artifact_version=$ARTIFACT_VERSION" >> $GITHUB_OUTPUT
-          echo "slugified_version=$SLUGIFIED_VERSION" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      # Step 3: Upload Build Metadata (Universal)
+      - name: Upload Build Metadata (Universal)
+        if: steps.check.outputs.is_fork == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-metadata
+          path: ${{ runner.temp }}/build-metadata/
+          retention-days: 5
 
   # =========================================================================
   # 1. BUILD COMMON ASSETS (Headers & Docs)
@@ -162,170 +176,28 @@ jobs:
     needs: validate-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Checkout OpenSSL Source Code
+      - name: Checkout OpenSSL Source
+        uses: actions/checkout@v6
         with:
           repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.sha }}
+          path: openssl-src
       
+      # Step 3: Build Common Assets
       - name: Build Common Assets
-        run: |
-          ./Configure linux-x86_64 no-tests --prefix=/usr/local
-          make -j$(nproc) install_dev DESTDIR=$PWD/common-assets
-          make install_html_docs DESTDIR=$PWD/common-assets || true
-          
-          # Include plain-text License
-          cp LICENSE.txt common-assets/usr/local/
-          
-          # --- Generate README ---
-          cat << 'EOF' > common-assets/usr/local/README.txt
-          OpenSSL Distribution Package
-          ============================
-          
-          This package contains the OpenSSL executable, shared libraries, static libraries (stripped), C headers, and documentation.
-          
-          Package Layout:
-          ---------------
-          * version.txt         - OpenSSL version in this package [non-redistributable]
-          * openssl             - The OpenSSL command-line utility [redistributable/optional]
-          * libcrypto / libssl  - Shared libraries [redistributable/required] 
-          * install_symlinks.sh - (POSIX only) Script to restore shared library symlinks [redistributable/optional] 
-          * engines/            - OpenSSL engines [redistributable/optional] 
-          * providers/          - OpenSSL providers [redistributable/optional] 
-          * doc/                - Developers Documentation [non-redistributable] 
-          * include/            - C Header files [non-redistributable] 
-          * lib/import/         - Import libraries (Windows only) [non-redistributable] 
-          * lib/static/         - Static libraries (.lib / .a) [non-redistributable]
-          
-          Linking Instructions:
-          ---------------------
-          * Windows Dynamic: Link against the import libraries in `lib/import/` (which point to the DLLs in the root).
-          * Windows Static:  Link against the static libraries in `lib/static/` (Compiled with /MD Dynamic CRT).
-          * POSIX Dynamic:   Link directly against the shared libraries (.so / .dylib) in the root directory.
-          * POSIX Static:    Link against the static archives (.a) in `lib/static/`.
-          
-          Deployment Instructions (Linux / macOS / Unix):
-          -----------------------------------------------
-          Windows file systems fail to extract Unix symbolic links. To ensure cross-platform compatibility, this archive contains only the physical shared library files.
-          
-          If this package includes the 'install_symlinks.sh' script, you MUST run it from the root of the extracted directory to recreate the required library symlinks (e.g., libcrypto.so -> libcrypto.so.X).
-          
-          $ cd <extracted_directory>
-          $ sh ./install_symlinks.sh
-          
-          Windows Users:
-          --------------
-          Windows does not use symlinks for OpenSSL DLLs. You can safely ignore or delete the shell script.
-          EOF
-          
-          # Remove unnecessary large directories
-          rm -rf common-assets/usr/local/lib common-assets/usr/local/lib64 common-assets/usr/local/bin common-assets/usr/local/ssl
+        run: bash ./scripts/01_build_common_assets/01_build_assets.sh "${{ github.workspace }}/openssl-src" "${{ github.workspace }}/common-assets"
 
+      # Step 4: Generate Formatted LICENSE.rtf for WiX MSI
       - name: Generate Formatted LICENSE.rtf for WiX MSI
         shell: pwsh
-        run: |
-          $InputPath  = "common-assets/usr/local/LICENSE.txt"
-          $OutputPath = "common-assets/usr/local/LICENSE.rtf"
-          $ErrorActionPreference = 'Stop'
+        run: pwsh ./scripts/01_build_common_assets/02_generate_license_rtf.ps1
 
-          try {
-              # Resolve relative paths to absolute paths based on current directory ($PWD)
-              if (-not [System.IO.Path]::IsPathRooted($InputPath)) {
-                  $InputPath = Join-Path $PWD.Path $InputPath
-              }
-              if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
-                  $OutputPath = Join-Path $PWD.Path $OutputPath
-              }
-
-              # 1. Explicitly assert that the input file exists
-              if (-not (Test-Path -Path $InputPath -PathType Leaf)) {
-                  throw "Input license file was not found at path: '$InputPath'"
-              }
-
-              # 2. Read content and verify it is not empty
-              $rawText = [System.IO.File]::ReadAllText($InputPath)
-              if ([string]::IsNullOrWhiteSpace($rawText)) {
-                  throw "Input license file '$InputPath' is empty!"
-              }
-
-              $lines = $rawText -split "`r?`n"
-
-              # 3. Extract the Title block (skipping leading blank lines until the title starts)
-              $titleLines = [System.Collections.Generic.List[string]]::new()
-              $titleStarted = $false
-              $bodyStartIndex = $lines.Length
-
-              for ($i = 0; $i -lt $lines.Length; $i++) {
-                  $trimmed = $lines[$i].Trim()
-                  if (-not $titleStarted) {
-                      if ($trimmed.Length -gt 0) {
-                          $titleStarted = $true
-                          $titleLines.Add($trimmed)
-                      }
-                  } else {
-                      if ($trimmed.Length -eq 0) {
-                          $bodyStartIndex = $i
-                          break
-                      }
-                      $titleLines.Add($trimmed)
-                  }
-              }
-
-              if ($titleLines.Count -eq 0) {
-                  throw "Failed to parse title block: No non-empty lines found in '$InputPath'"
-              }
-
-              # 4. Extract and concatenate subsequent body paragraphs
-              $bodyLines = if ($bodyStartIndex -lt $lines.Length) { $lines[$bodyStartIndex..($lines.Length - 1)] } else { @() }
-              $bodyBlocks = [System.Collections.Generic.List[string]]::new()
-              $currentBlock = [System.Collections.Generic.List[string]]::new()
-
-              foreach ($line in $bodyLines) {
-                  $trimmed = $line.Trim()
-                  if ($trimmed.Length -gt 0) {
-                      $currentBlock.Add($trimmed)
-                  } else {
-                      if ($currentBlock.Count -gt 0) {
-                          $bodyBlocks.Add(($currentBlock -join " "))
-                          $currentBlock.Clear()
-                      }
-                  }
-              }
-              if ($currentBlock.Count -gt 0) {
-                  $bodyBlocks.Add(($currentBlock -join " "))
-              }
-
-              # 5. Build RTF structure with Segoe UI font
-              $rtf = "{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Segoe UI;}}`r`n"
-              
-              # Title: Centered, Bold, preserving line breaks
-              $titleContent = ($titleLines | ForEach-Object { "$_ \line " }) -join ""
-              $titleContent = $titleContent -replace ' \\line $', ''
-              $rtf += "\pard\qc\b\fs22 $titleContent\b0\par\par`r`n"
-
-              # Body Paragraphs
-              foreach ($block in $bodyBlocks) {
-                  if ($block -cmatch '^[A-Z\s,.:\-]+$' -and $block -cmatch '[A-Z]' -and $block.Length -lt 100) {
-                      $rtf += "\pard\qc\b\fs20 $block\b0\par\par`r`n"
-                  } else {
-                      $rtf += "\pard\ql\fs18 $block\par\par`r`n"
-                  }
-              }
-              $rtf += "}"
-
-              # 6. Ensure destination directory exists if output path includes subfolders
-              $outDir = Split-Path -Parent $OutputPath
-              if ($outDir -and -not (Test-Path $outDir)) {
-                  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-              }
-
-              [System.IO.File]::WriteAllText($OutputPath, $rtf, [System.Text.Encoding]::ASCII)
-              Write-Host "✅ Successfully generated formatted RTF: '$OutputPath'"
-          }
-          catch {
-              Write-Error "FATAL: $($_.Exception.Message)"
-              exit 1
-          }
-
+      # Step 5: Upload Common Assets
       - name: Upload Common Assets
         uses: actions/upload-artifact@v7
         with:
@@ -342,221 +214,71 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        linkage: [shared, static]
-        platform:
-          - { label: Windows, os: windows-latest, arch: x64, target: VC-WIN64A, vcvars: amd64 }
-          - { label: Windows, os: windows-latest, arch: x86, target: VC-WIN32, vcvars: x86 }
-          - { label: Linux, os: ubuntu-latest, arch: x64, target: linux-x86_64 }
-          - { label: Linux, os: ubuntu-latest, arch: arm64, target: linux-aarch64 }
-          - { label: macOS, os: macos-14, arch: x64, target: darwin64-x86_64-cc, minos: "10.14" }
-          - { label: macOS, os: macos-14, arch: arm64, target: darwin64-arm64-cc, minos: "11.0" }
-          - { label: Android, os: ubuntu-latest, arch: arm64, target: android-arm64, api: 21 }
-          - { label: Android, os: ubuntu-latest, arch: arm, target: android-arm, api: 21 }
-          - { label: iOS, os: macos-14, arch: arm64, target: ios64-cross }
-          - { label: iOS, os: macos-14, arch: sim-arm64, target: iossimulator-xcrun, minos: "11.0" }
-        exclude:
-          - linkage: shared
-            platform: { label: iOS }
-          
+        include: ${{ fromJSON(needs.validate-version.outputs.compile_matrix) }}
     runs-on: ${{ matrix.platform.os }}
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Checkout OpenSSL Source Code
+      - name: Checkout OpenSSL Source
+        uses: actions/checkout@v6
         with:
           repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.sha }}
+          path: openssl-src
 
+      # Step 3: Validate Azure Code Signing Secrets (Windows)
       - name: Validate Azure Code Signing Secrets
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}')) { $missing += "AZURE_CLIENT_ID" }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}')) { $missing += "AZURE_CLIENT_SECRET" }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}')) { $missing += "AZURE_TENANT_ID" }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}')) { $missing += "AZURE_SUBSCRIPTION_ID" }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}')) { $missing += "AZURE_SIGNING_ACCOUNT_NAME" }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += "AZURE_CERTIFICATE_PROFILE_NAME" }
-          
-          if ($missing.Count -gt 0) {
-            Write-Error "Required Azure Code Signing secret(s) missing: $($missing -join ', ')"
-            exit 1
-          }
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: pwsh ./scripts/02_compile_binaries/01_validate_secrets.ps1
 
+      # Step 4: Prepare Windows Targets
       - name: Prepare Windows Targets
         if: matrix.platform.label == 'Windows'
         shell: bash
-        run: |
-          cat << 'EOF' > Configurations/99-win-hybridcrt.conf
-          my %targets = (
-              # =========================================================================
-              # x64 HybridCRT Targets
-              # =========================================================================
-              "VC-WIN64A-SHARED" => {
-                  inherit_from => [ "VC-WIN64A" ],
-                  disable      => [ "tests", "makedepend", "__DOCS__" ],
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;                 # Remove Dynamic CRT
-                      return "$f /MT /Zi";                 # Force Static CRT + Debug Symbols
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-WIN64A-STATIC" => {
-                  inherit_from => [ "VC-WIN64A" ],
-                  disable      => [ "shared", "module", "tests", "makedepend", "__DOCS__" ],
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      return "$f /MT /Zi";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
+        run: bash ./scripts/02_compile_binaries/02_prepare_win_targets.sh "${{ github.workspace }}/openssl-src"
 
-              # =========================================================================
-              # x86 HybridCRT Targets
-              # =========================================================================
-              "VC-WIN32-SHARED" => {
-                  inherit_from => [ "VC-WIN32" ],
-                  disable      => [ "tests", "makedepend", "__DOCS__" ],
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      return "$f /MT /Zi";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-WIN32-STATIC" => {
-                  inherit_from => [ "VC-WIN32" ],
-                  disable      => [ "shared", "module", "tests", "makedepend", "__DOCS__" ],
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      return "$f /MT /Zi";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
+      # Step 5: Install JOM (Parallel Build Tool)
+      - name: Install JOM (Parallel Build Tool)
+        if: matrix.platform.label == 'Windows'
+        run: choco install jom --no-progress -y
 
-              # =========================================================================
-              # ARM64EC HybridCRT Targets
-              # =========================================================================
-              "VC-ARM64EC-SHARED" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "asm", "tests", "makedepend", "__DOCS__" ],
-                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
-                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;                 # Remove Dynamic CRT
-                      $f =~ s/\/arm64\b//ig;               # Remove standard ARM64 flag
-                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MACHINE:ARM64\b//ig;       # Remove conflicting machine type
-                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-ARM64EC-STATIC" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "shared", "module", "asm", "tests", "makedepend", "__DOCS__" ],
-                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
-                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      $f =~ s/\/arm64\b//ig;
-                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MACHINE:ARM64\b//ig;
-                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-          );
-          EOF
-          
-          # Check if the 'no-docs' option is documented in INSTALL.md (introduced in 3.2.0)
-          if grep -q "no-docs" INSTALL.md; then
-            echo "Feature 'docs' is supported. Disabling it in config."
-            sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-win-hybridcrt.conf
-          else
-            echo "Feature 'docs' is NOT supported (likely OpenSSL 3.0.x or 3.1.x). Removing from config."
-            sed -i 's/"__DOCS__"//g' Configurations/99-win-hybridcrt.conf
-          fi
-
+      # Step 6: Compile and Stage Windows Binaries
       - name: Compile and Stage Windows Binaries
         if: matrix.platform.label == 'Windows'
         shell: cmd
-        run: |
-          :: Dynamically locate the latest Visual Studio installation path
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
-          
-          :: Call vcvarsall.bat using the dynamically discovered path
-          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.platform.vcvars }}
-                    
-          set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
-          :: Use the original raw_artifact\dist path so it matches POSIX perfectly
-          set "STAGED=%GITHUB_WORKSPACE%\raw_artifact\dist"
-          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers"
+        run: call scripts\02_compile_binaries\03_compile_windows.cmd ${{ matrix.platform.vcvars }} ${{ matrix.platform.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\raw_artifact\dist" || exit /b %errorlevel%
 
-          :: Construct Target Name dynamically (e.g., VC-WIN64A-SHARED)
-          set "LINK_UPPER=${{ matrix.linkage }}"
-          if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.platform.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.platform.target }}-STATIC")
-
-          cd openssl-src
-          perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
-          nmake && nmake install_sw
-
-          :: Organize into Staged Structure (Matching the ORIGINAL layout)
-          if "${{ matrix.linkage }}"=="shared" (
-              :: Copy exe and dlls to the ROOT of the artifact, not a bin/ folder!
-              if exist "%INSTALL_TEMP%\bin\openssl.exe" copy "%INSTALL_TEMP%\bin\openssl.exe" "%STAGED%\"
-              copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
-              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
-              if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
-              if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
-          ) else (
-              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
-          )
-
+      # Step 7: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
-        if: matrix.platform.label == 'Windows'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true
         id: check_binaries
         shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_artifact\dist" -Recurse -Include *.exe,*.dll
-          if ($files.Count -gt 0) {
-            Write-Host "Found $($files.Count) binary file(s) to sign."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=true"
-          } else {
-            Write-Host "No .exe or .dll files found to sign."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=false"
-          }
+        run: pwsh ./scripts/02_compile_binaries/04_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
+      # Step 8: Azure Login
       - name: Azure Login
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      # Step 9: Sign Windows Binaries (Azure Artifact Signing)
       - name: Sign Windows Binaries (Azure Artifact Signing)
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -569,160 +291,30 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # Step 10: Verify Signed Windows Binaries
       - name: Verify Signed Windows Binaries
-        if: matrix.platform.label == 'Windows' && steps.check_binaries.outputs.has_binaries == 'true'
+        if: matrix.platform.label == 'Windows' && inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_artifact\dist" -Recurse -Include *.exe,*.dll
-          if ($files.Count -eq 0) {
-            Write-Host "No .exe or .dll files found to verify."
-            exit 0
-          }
-          $failed = $false
-          foreach ($file in $files) {
-            Write-Host "Verifying $($file.FullName)..."
-            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status: $($sig.Status)"
-            Write-Host "  StatusMessage: $($sig.StatusMessage)"
-            if ($sig.SignerCertificate) {
-              Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-              Write-Host "  Issuer: $($sig.SignerCertificate.Issuer)"
-            }
-            if ($sig.Status -ne 'Valid') {
-              Write-Error "Signature status for $($file.Name) is invalid: $($sig.Status)"
-              $failed = $true
-            }
-          }
-          if ($failed) {
-            exit 1
-          }
+        run: pwsh ./scripts/02_compile_binaries/05_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_artifact\dist"
 
+      # Step 11: Install Linux Dependencies
       - name: Install Linux Dependencies
         if: matrix.platform.label == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsctp-dev
-          if [ "${{ matrix.platform.arch }}" == "arm64" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-          fi
+        run: bash ./scripts/02_compile_binaries/06_install_linux_deps.sh "${{ matrix.platform.arch }}"
 
+      # Step 12: Compile Unix (POSIX)
       - name: Compile Unix (POSIX)
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: |
-          TARGET="${{ matrix.platform.target }}"
-          LINKAGE="${{ matrix.linkage }}"
-          LABEL="${{ matrix.platform.label }}"
-          PREFIX="${{ github.workspace }}/raw_artifact/usr/local"
-          
-          EXTRA_FLAGS=""
-          
-          # --- Platform Specific Setup ---
-          if [ "$LABEL" == "macOS" ] ; then
-            EXTRA_FLAGS="-mmacosx-version-min=${{ matrix.platform.minos }}"
-          elif [ "$LABEL" == "Linux" ]; then
-            EXTRA_FLAGS="enable-sctp -Wl,-rpath,'\$\$ORIGIN'"
-            if [ "$TARGET" == "linux-aarch64" ]; then
-              export CROSS_COMPILE=aarch64-linux-gnu-
-            fi
-          elif [ "$LABEL" == "Android" ]; then
-            sed -i 's/-fPIC/-fPIC -Wl,-z,max-page-size=16384/g' Configurations/15-android.conf
-            export ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME
-            export PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
-          elif [ "$LABEL" == "iOS" ]; then
-            if [[ "$TARGET" == *"simulator"* ]]; then
-              export CROSS_TOP=$(xcode-select -print-path)/Platforms/iPhoneSimulator.platform/Developer
-              export CROSS_SDK=iPhoneSimulator.sdk
-              EXTRA_FLAGS="-mios-simulator-version-min=${{ matrix.platform.minos }}"
-            else
-              export CROSS_TOP=$(xcode-select -print-path)/Platforms/iPhoneOS.platform/Developer
-              export CROSS_SDK=iPhoneOS.sdk
-            fi
-          fi
-          
-          # --- Configure & Build ---
-          if [ "$LINKAGE" == "shared" ]; then
-            ./Configure $TARGET shared no-tests $EXTRA_FLAGS --prefix="$PREFIX"
-          else
-            if ! ./Configure $TARGET no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"; then
-              ./Configure $TARGET no-shared no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"
-            fi
-          fi
-          
-          make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          make install_sw DESTDIR="/"
+        run: bash ./scripts/02_compile_binaries/07_compile_posix.sh "${{ matrix.platform.label }}" "${{ matrix.platform.target }}" "${{ matrix.linkage }}" "${{ github.workspace }}/openssl-src" "${{ github.workspace }}/raw_artifact/usr/local" "${{ matrix.platform.minos || '' }}" "${{ matrix.platform.api || '' }}"
 
+      # Step 13: Organize Unix Binaries
       - name: Organize Unix Binaries
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: |
-          LABEL="${{ matrix.platform.label }}"
-          LINKAGE="${{ matrix.linkage }}"
-          PREFIX="${{ github.workspace }}/raw_artifact/usr/local"
-          mkdir -p raw_artifact/dist/{engines,providers,lib/static}
-          
-          if [ "$LINKAGE" == "shared" ]; then
-            # Executable
-            find "$PREFIX/bin" -type f -name "openssl" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-            
-            # Shared Libs
-            if [ "$LABEL" == "Android" ]; then
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "*.so" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-            else
-              # Versioned libs only: libcrypto.so.X, libssl.so.X or libcrypto.X.dylib, libssl.X.dylib
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.so.*" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.so.*" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libcrypto.*.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-              find "$PREFIX/lib" "$PREFIX/lib64" -maxdepth 1 -type f -name "libssl.*.dylib" -exec cp {} raw_artifact/dist/ \; 2>/dev/null || true
-            fi
-            
-            # Engines & Providers
-            find "$PREFIX" -path "*/engines-*/*.so" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/engines-*/*.dylib" -exec cp {} raw_artifact/dist/engines/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/ossl-modules*/*.so" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
-            find "$PREFIX" -path "*/ossl-modules*/*.dylib" -exec cp {} raw_artifact/dist/providers/ \; 2>/dev/null || true
-            
-            # Stripping (Non-macOS)
-            if [ "$LABEL" != "macOS" ]; then
-              find raw_artifact/dist -maxdepth 1 -type f \( -name "openssl" -o -name "*.so*" \) -exec strip {} + 2>/dev/null || true
-              find raw_artifact/dist/engines raw_artifact/dist/providers -type f -name "*.so" -exec strip {} + 2>/dev/null || true
-            fi
-            
-            # Symlinks script (Linux/macOS)
-            if [ "$LABEL" == "Linux" ] || [ "$LABEL" == "macOS" ]; then
-              echo "#!/bin/sh" > raw_artifact/dist/install_symlinks.sh
-              echo "echo \"Restoring shared library symlinks...\"" >> raw_artifact/dist/install_symlinks.sh
-              
-              cd raw_artifact/dist
-              for lib in libcrypto libssl; do
-                if [ "$LABEL" == "Linux" ]; then
-                  REAL_FILE=$(ls ${lib}.so.* 2>/dev/null | head -n 1)
-                  if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.so" >> install_symlinks.sh
-                  fi
-                else
-                  REAL_FILE=$(ls ${lib}.*.dylib 2>/dev/null | head -n 1)
-                  if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.dylib" >> install_symlinks.sh
-                  fi
-                fi
-              done
-              chmod +x install_symlinks.sh
-              cd - > /dev/null
-            fi
-            
-          else
-            # Static linkage
-            mkdir -p raw_artifact/dist/lib/static
-            find "$PREFIX" -type f -name "*.a" -exec cp {} raw_artifact/dist/lib/static/ \; 2>/dev/null || true
-            # Stripping (Non-macOS)
-            if [ "$LABEL" != "macOS" ]; then
-              find raw_artifact/dist/lib/static -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
-            fi
-          fi
-          
-          find raw_artifact/dist -type d -empty -delete || true
+        run: bash ./scripts/02_compile_binaries/08_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist"
 
+      # Step 14: Upload Raw Artifact
       - name: Upload Raw Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -730,12 +322,13 @@ jobs:
           path: raw_artifact/dist
           retention-days: 1
           
-# =========================================================================
+  # =========================================================================
   # 2b. COMPILE ARM64X SLICES IN PARALLEL (Native ARM64 + ARM64EC)
   # =========================================================================
   compile-windows-arm64x-slices:
     name: Compile Windows ARM64X Slice (${{ matrix.slice.label }} ${{ matrix.linkage }})
     needs: validate-version
+    if: inputs.build_windows == true
     strategy:
       fail-fast: false
       matrix:
@@ -745,130 +338,33 @@ jobs:
           - { label: arm64ec,      target: VC-ARM64EC,   vcvars: amd64_arm64 }
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Checkout OpenSSL Source Code
+      - name: Checkout OpenSSL Source
+        uses: actions/checkout@v6
         with:
           repository: ${{ needs.validate-version.outputs.target_repo }}
           ref: ${{ needs.validate-version.outputs.sha }}
+          path: openssl-src
 
+      # Step 3: Prepare HybridCRT Targets
       - name: Prepare HybridCRT Targets
         shell: bash
-        run: |
-          cat << 'EOF' > Configurations/99-arm64x-prep.conf
-          my %targets = (
-              "VC-WIN64-ARM-SHARED" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "tests", "makedepend", "__DOCS__" ],
-                  multilib     => "-arm64",
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      return "$f /MT /Zi";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-WIN64-ARM-STATIC" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "shared", "module", "tests", "makedepend", "__DOCS__" ],
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      return "$f /MT /Zi";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      return "$f /debug /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-ARM64EC-SHARED" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "asm", "tests", "makedepend", "__DOCS__" ],
-                  multilib     => "-arm64",
-                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
-                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      $f =~ s/\/arm64\b//ig;
-                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MACHINE:ARM64\b//ig;
-                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-              "VC-ARM64EC-STATIC" => {
-                  inherit_from => [ "VC-WIN64-ARM" ],
-                  disable      => [ "shared", "module", "asm", "tests", "makedepend", "__DOCS__" ],
-                  CFLAGS       => "/W3 /wd4090 /wd4267 /wd4244 /nologo /O1 /Zi",
-                  ARFLAGS      => "/nologo /MACHINE:ARM64EC",
-                  cflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MDd?\b//g;
-                      $f =~ s/\/arm64\b//ig;
-                      return "$f /MT /arm64EC /D_WIN32_WINNT=0x0A00";
-                  },
-                  lflags       => sub {
-                      my $f = join(" ", @_);
-                      $f =~ s/\/MACHINE:ARM64\b//ig;
-                      return "$f /debug /MACHINE:ARM64EC /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib";
-                  },
-              },
-          );
-          EOF
+        run: bash ./scripts/03_compile_arm64x_slices/01_prepare_slice_targets.sh "${{ github.workspace }}/openssl-src"
 
-          if grep -q "no-docs" INSTALL.md; then
-            sed -i 's/"__DOCS__"/"docs"/g' Configurations/99-arm64x-prep.conf
-          else
-            sed -i 's/"__DOCS__"//g' Configurations/99-arm64x-prep.conf
-          fi
+      # Step 4: Install JOM (Parallel Build Tool)
+      - name: Install JOM (Parallel Build Tool)
+        run: choco install jom --no-progress -y
 
+      # Step 5: Compile and Stage Slice Binaries
       - name: Compile and Stage Slice Binaries
         shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_PATH=%%i"
-          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.slice.vcvars }}
-          
-          set "INSTALL_TEMP=%GITHUB_WORKSPACE%\temp_install"
-          set "STAGED=%GITHUB_WORKSPACE%\slice_out"
-          mkdir "%STAGED%\lib\static" "%STAGED%\lib\import" "%STAGED%\engines" "%STAGED%\providers" "%STAGED%\def"
+        run: call scripts\03_compile_arm64x_slices\02_compile_slice.cmd ${{ matrix.slice.vcvars }} ${{ matrix.slice.target }} ${{ matrix.linkage }} "${{ github.workspace }}\openssl-src" "${{ github.workspace }}\temp_install" "${{ github.workspace }}\slice_out" || exit /b %errorlevel%
 
-          set "LINK_UPPER=${{ matrix.linkage }}"
-          if "%LINK_UPPER%"=="shared" (set "TARGET_NAME=${{ matrix.slice.target }}-SHARED") else (set "TARGET_NAME=${{ matrix.slice.target }}-STATIC")
-
-          perl Configure %TARGET_NAME% --prefix="%INSTALL_TEMP%"
-          nmake && nmake install_sw
-
-          if "${{ matrix.linkage }}"=="shared" (
-              if exist "%INSTALL_TEMP%\bin\openssl.exe" copy "%INSTALL_TEMP%\bin\openssl.exe" "%STAGED%\"
-              copy "%INSTALL_TEMP%\bin\*.dll" "%STAGED%\"
-              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\import\"
-              if exist "%INSTALL_TEMP%\lib\engines-3" copy "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED%\engines\"
-              if exist "%INSTALL_TEMP%\lib\engines-4" copy "%INSTALL_TEMP%\lib\engines-4\*.dll" "%STAGED%\engines\"
-              if exist "%INSTALL_TEMP%\lib\ossl-modules" copy "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED%\providers\"
-              
-              :: Preserve module definitions
-              if exist "*.def" copy "*.def" "%STAGED%\def\"
-              if exist "util\*.def" copy "util\*.def" "%STAGED%\def\"
-              if exist "providers\*.def" copy "providers\*.def" "%STAGED%\def\"
-              if exist "engines\*.def" copy "engines\*.def" "%STAGED%\def\"
-              
-              :: Stage OpenSSL provider helper libraries & entry point objects
-              if exist "providers\*.lib" copy "providers\*.lib" "%STAGED%\providers\"
-              if exist "providers\*-dso-*.obj" copy "providers\*-dso-*.obj" "%STAGED%\providers\"
-              if exist "providers\*.obj" copy "providers\*.obj" "%STAGED%\providers\"
-              
-              :: Stage OpenSSL engine objects
-              :: Stage all engine DSO objects across the build tree (e.g. engines/*.obj and crypto/pem/*loader_attic*.obj)
-              for /r . %%f in (*-dso-*.obj) do @copy "%%f" "%STAGED%\engines\" 2>nul
-              if exist "engines\*.obj" copy "engines\*.obj" "%STAGED%\engines\"
-          ) else (
-              copy "%INSTALL_TEMP%\lib\*.lib" "%STAGED%\lib\static\"
-          )
-
+      # Step 6: Upload Slice Artifact
       - name: Upload Slice Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -882,8 +378,14 @@ jobs:
   merge-windows-arm64x:
     name: Merge & Link ARM64X Binaries
     needs: [validate-version, compile-windows-arm64x-slices]
+    if: inputs.build_windows == true
     runs-on: windows-latest
     steps:
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Download Slices
       - name: Download Slices
         uses: actions/download-artifact@v8
         with:
@@ -893,309 +395,30 @@ jobs:
 
       - name: Fuse ARM64X Binaries and Dynamic Modules
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $wsDir = $env:GITHUB_WORKSPACE
-          $distShared = "$wsDir\raw_shared\dist"
-          $distStatic = "$wsDir\raw_static\dist"
-          
-          # Locate MSVC Tools
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath  = & $vswhere -latest -property installationPath
-          if (-not (Test-Path $vsPath)) { throw "FATAL: Visual Studio installation path could not be resolved!" }
-          
-          $vcVars  = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
-          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
-            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
-          if (-not (Test-Path $dumpbin)) { throw "FATAL: Hostx64 dumpbin.exe not found!" }
+        run: pwsh ./scripts/04_merge_arm64x/01_fuse_binaries.ps1
 
-          # Initialize output directory structure
-          New-Item -ItemType Directory -Force -Path `
-            "$distStatic\lib\static\arm64", "$distStatic\lib\static\arm64ec", `
-            "$distShared\lib\import\arm64", "$distShared\lib\import\arm64ec", `
-            "$distShared\engines", "$distShared\providers" | Out-Null
-
-          # Resolve Slice Directories
-          $arm64Shared   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-shared*" | Select-Object -ExpandProperty FullName -First 1
-          $arm64Static   = Get-ChildItem "$wsDir\slices" -Directory -Filter "*native-arm64-static*" | Select-Object -ExpandProperty FullName -First 1
-          $arm64ecShared = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-shared*"       | Select-Object -ExpandProperty FullName -First 1
-          $arm64ecStatic = Get-ChildItem "$wsDir\slices" -Directory -Filter "*arm64ec-static*"       | Select-Object -ExpandProperty FullName -First 1
-
-          if (-not $arm64Shared -or -not $arm64Static -or -not $arm64ecShared -or -not $arm64ecStatic) {
-            throw "FATAL: One or more slice directories were not found in $wsDir\slices!"
-          }
-
-          # -------------------------------------------------------------
-          # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
-          # -------------------------------------------------------------
-          Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libcrypto merge failed with exit code $LASTEXITCODE" }
-
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libssl merge failed with exit code $LASTEXITCODE" }
-
-          Copy-Item "$arm64Static\lib\static\*.lib" "$distStatic\lib\static\arm64\" -Force
-          Copy-Item "$arm64ecStatic\lib\static\*.lib" "$distStatic\lib\static\arm64ec\" -Force
-
-          # -------------------------------------------------------------
-          # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
-          # -------------------------------------------------------------
-          Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
-          $cryptoDef = Get-ChildItem "$arm64ecShared\def" -Filter "*crypto*.def" | Select-Object -ExpandProperty FullName -First 1
-          $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-Object -ExpandProperty FullName -First 1
-
-          if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
-          if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
-
-          # Link libcrypto-3-arm64.dll (ARM64X)
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libcrypto-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
-
-          # Link libssl-3-arm64.dll (ARM64X)
-          cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$distShared\libssl-3-arm64.dll`" /IMPLIB:`"$distShared\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$distShared\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
-          if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
-
-          Copy-Item "$arm64Shared\lib\import\*.lib" "$distShared\lib\import\arm64\" -Force
-          Copy-Item "$arm64ecShared\lib\import\*.lib" "$distShared\lib\import\arm64ec\" -Force
-
-          # -------------------------------------------------------------
-          # 3. LINK TRUE ARM64X PROVIDERS (legacy.dll)
-          # -------------------------------------------------------------
-          Write-Host "`n=== 3. Linking True ARM64X Providers ==="
-          if (Test-Path "$arm64ecShared\providers\legacy.dll") {
-            Write-Host "  -> Fusing ARM64X provider: providers\legacy.dll"
-
-            # 3a. Merge provider helper libraries (liblegacy.lib and libcommon.lib) into ARM64X
-            $mergedLegacyLib = "$wsDir\arm64x_liblegacy.lib"
-            $mergedCommonLib = "$wsDir\arm64x_libcommon.lib"
-
-            cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$mergedLegacyLib`" `"$arm64Shared\providers\liblegacy.lib`" `"$arm64ecShared\providers\liblegacy.lib`""
-            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to merge liblegacy.lib into ARM64X!" }
-
-            cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$mergedCommonLib`" `"$arm64Shared\providers\libcommon.lib`" `"$arm64ecShared\providers\libcommon.lib`""
-            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to merge libcommon.lib into ARM64X!" }
-
-            # 3b. Extract exports for legacy.dll
-            $exportsDump = & $dumpbin /exports "$arm64ecShared\providers\legacy.dll" | Out-String
-            $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object { $matches[1] }
-            if ($exportLines.Count -eq 0) { $exportLines = @("OSSL_provider_init") }
-
-            $legacyDef = "$wsDir\def_legacy.def"
-            $defContent = "LIBRARY legacy`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
-            [IO.File]::WriteAllText($legacyDef, $defContent)
-
-            # 3c. Collect entry point objects (legacyprov.obj)
-            $legacyObjArm64   = Get-ChildItem "$arm64Shared\providers" -Filter "*legacy*.obj" | Select-Object -ExpandProperty FullName -First 1
-            $legacyObjArm64ec = Get-ChildItem "$arm64ecShared\providers" -Filter "*legacy*.obj" | Select-Object -ExpandProperty FullName -First 1
-
-            if (-not $legacyObjArm64 -or -not $legacyObjArm64ec) {
-              throw "FATAL: legacyprov entry point object not found in slice artifacts!"
-            }
-
-            # 3d. Link true ARM64X legacy.dll
-            $legacyRsp = "$wsDir\link_legacy.rsp"
-            $rspLines = @(
-              "/NOLOGO",
-              "/DLL",
-              "/MACHINE:ARM64X",
-              "/OUT:`"$distShared\providers\legacy.dll`"",
-              "/DEF:`"$legacyDef`"",
-              "/DEFARM64NATIVE:`"$legacyDef`"",
-              "`"$legacyObjArm64`"",
-              "`"$legacyObjArm64ec`"",
-              "`"$mergedLegacyLib`"",
-              "`"$mergedCommonLib`"",
-              "`"$distShared\lib\import\libcrypto.lib`"",
-              "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
-              "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
-            )
-            [IO.File]::WriteAllLines($legacyRsp, $rspLines)
-
-            cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$legacyRsp`""
-            if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to link true ARM64X providers\legacy.dll!" }
-            Write-Host "     [+] Successfully linked TRUE ARM64X providers\legacy.dll"
-          }
-
-          # -------------------------------------------------------------
-          # 4. LINK TRUE ARM64X ENGINES (capi, padlock, loader_attic, etc.)
-          # -------------------------------------------------------------
-          Write-Host "`n=== 4. Linking True ARM64X Engines ==="
-          if (Test-Path "$arm64ecShared\engines") {
-            $engineDlls = Get-ChildItem "$arm64ecShared\engines" -Filter "*.dll"
-            foreach ($dll in $engineDlls) {
-              $engName = $dll.BaseName
-              Write-Host "  -> Fusing ARM64X engine: engines\$($dll.Name)"
-
-              # 4a. Extract exports
-              $exportsDump = & $dumpbin /exports $dll.FullName | Out-String
-              $exportLines = ($exportsDump -split "`r?`n") | Where-Object { $_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$' } | ForEach-Object { $matches[1] }
-              if ($exportLines.Count -eq 0) { $exportLines = @("bind_engine", "v_check") }
-
-              $engDef = "$wsDir\def_$engName.def"
-              $defContent = "LIBRARY $engName`r`nEXPORTS`r`n" + ($exportLines -join "`r`n")
-              [IO.File]::WriteAllText($engDef, $defContent)
-
-              # 4b. Collect ALL engine objects (no -First 1, force array @(...) to include secondary objects like pvkfmt.obj)
-              $engObjsArm64   = @(Get-ChildItem "$arm64Shared\engines" -Filter "*$engName*.obj" | Select-Object -ExpandProperty FullName)
-              $engObjsArm64ec = @(Get-ChildItem "$arm64ecShared\engines" -Filter "*$engName*.obj" | Select-Object -ExpandProperty FullName)
-
-              if ($engObjsArm64.Count -eq 0 -or $engObjsArm64ec.Count -eq 0) {
-                throw "FATAL: Object files for engine $engName not found in slice artifacts!"
-              }
-
-              $allEngObjs = $engObjsArm64 + $engObjsArm64ec
-
-              # 4c. Write Response File (Links engine objects + import libcrypto.lib ONLY, NO static libcrypto)
-              $engRsp = "$wsDir\link_$engName.rsp"
-              $rspLines = @(
-                "/NOLOGO",
-                "/DLL",
-                "/MACHINE:ARM64X",
-                "/OUT:`"$distShared\engines\$($dll.Name)`"",
-                "/DEF:`"$engDef`"",
-                "/DEFARM64NATIVE:`"$engDef`"",
-                "`"$distShared\lib\import\libcrypto.lib`"",
-                "ws2_32.lib", "gdi32.lib", "advapi32.lib", "crypt32.lib", "user32.lib",
-                "/NODEFAULTLIB:libucrt.lib", "/DEFAULTLIB:ucrt.lib"
-              ) + ($allEngObjs | ForEach-Object { "`"$_`"" })
-
-              [IO.File]::WriteAllLines($engRsp, $rspLines)
-
-              # 4d. Link true ARM64X engine DLL
-              cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe @`"$engRsp`""
-              if ($LASTEXITCODE -ne 0) { throw "FATAL: Failed to link true ARM64X engines\$($dll.Name)!" }
-              Write-Host "     [+] Successfully linked TRUE ARM64X engines\$($dll.Name)"
-            }
-          }
-
-          # -------------------------------------------------------------
-          # 5. STAGE PURE NATIVE ARM64 openssl.exe
-          # -------------------------------------------------------------
-          Write-Host "`n=== 5. Staging Native ARM64 openssl.exe ==="
-          if (-not (Test-Path "$arm64Shared\openssl.exe")) {
-            throw "FATAL: Native ARM64 openssl.exe not found in $arm64Shared!"
-          }
-          Copy-Item "$arm64Shared\openssl.exe" "$distShared\openssl.exe" -Force
-
-          # -------------------------------------------------------------
-          # 6. STRICT CLEANUP (Keep ONLY *.dll in modules, ONLY *.lib in import)
-          # -------------------------------------------------------------
-          Write-Host "`n=== 6. Cleaning Up Leftover Build Artifacts ==="
-          Get-ChildItem "$distShared\engines", "$distShared\providers" -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -ne '.dll' } |
-            ForEach-Object {
-              Write-Host "  [-] Removing intermediate build file: $($_.FullName)"
-              Remove-Item $_.FullName -Force
-            }
-
-          Get-ChildItem "$distShared\lib\import" -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -ne '.lib' } |
-            ForEach-Object {
-              Write-Host "  [-] Removing intermediate import file: $($_.FullName)"
-              Remove-Item $_.FullName -Force
-            }
-
-      # -----------------------------------------------------------------
-      # 5. RECURSIVE DEEP VERIFICATION (VALIDATES EVERY SINGLE DLL)
-      # -----------------------------------------------------------------
+      # Step 4: Recursive Deep Verification of All ARM64X Binaries
       - name: Recursive Deep Verification of All ARM64X Binaries
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # Point to raw_shared\dist where shared binaries are staged
-          $dist = "$env:GITHUB_WORKSPACE\raw_shared\dist"
+        run: pwsh ./scripts/04_merge_arm64x/02_verify_arm64x.ps1 -DistDir "${{ github.workspace }}\raw_shared\dist"
 
-          # Locate dumpbin.exe
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath  = & $vswhere -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" |
-            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -ExpandProperty FullName -First 1
-
-          Write-Host "Using Dumpbin: $dumpbin"
-          Write-Host "Inspecting Directory: $dist"
-
-          # 1. Verify openssl.exe is Pure Native ARM64 (AA64)
-          $exePath = "$dist\openssl.exe"
-          Write-Host "`n=== Checking openssl.exe: $exePath ==="
-          if (-not (Test-Path $exePath)) {
-            throw "openssl.exe not found at $exePath!"
-          }
-
-          $exeHeaders = & $dumpbin /headers $exePath | Out-String
-          Write-Host "--- dumpbin /headers openssl.exe output ---"
-          Write-Host $exeHeaders
-
-          $isNativeArm64 = $exeHeaders -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $exeHeaders -match "(?i)machine\s+\(ARM64\)"
-          Write-Host "Comparison: Pattern='AA64 machine (ARM64)' | Matched=$isNativeArm64"
-
-          if (-not $isNativeArm64) {
-            throw "openssl.exe failed verification: Output does not match Native ARM64 (AA64)!"
-          }
-          Write-Host "✅ openssl.exe is confirmed Native ARM64"
-
-          # 2. Recursively verify EVERY DLL in dist/, providers/, and engines/
-          $allDlls = Get-ChildItem $dist -Recurse -Filter "*.dll"
-          if ($allDlls.Count -eq 0) { throw "No DLLs found in $dist directory!" }
-
-          Write-Host "`n=== Recursively Verifying All ($($allDlls.Count)) DLLs for ARM64X ==="
-          $failed = $false
-
-          foreach ($dll in $allDlls) {
-            $relPath = $dll.FullName.Substring($dist.Length + 1)
-            Write-Host "`n[+] Inspecting: $relPath"
-
-            $headers    = & $dumpbin /headers $dll.FullName | Out-String
-            $loadConfig = & $dumpbin /loadconfig $dll.FullName | Out-String
-
-            Write-Host "--- dumpbin machine line ($relPath) ---"
-            Write-Host ($headers | Select-String "machine").Line
-
-            # Check A: Base machine header must be ARM64 (AA64)
-            $isArm64Header = $headers -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $headers -match "(?i)machine\s+\(.*ARM64.*\)"
-            
-            # Check B: Must contain Dynamic Value Relocation Table (DVRT) storing the EC slice
-            $hasDvrt = $loadConfig -match "(?i)Dynamic Value Relocation Table" -or $loadConfig -match "(?i)ARM64X"
-
-            Write-Host "  -> Comparison: Base ARM64 Header=$isArm64Header | DVRT Table=$hasDvrt"
-
-            if (-not $isArm64Header) {
-              Write-Error "FAILED: $relPath is not an ARM64-based PE binary!"
-              $failed = $true
-            } elseif (-not $hasDvrt) {
-              Write-Error "FAILED: $relPath is missing the Dynamic Value Relocation Table (EC slice not embedded)!"
-              $failed = $true
-            } else {
-              Write-Host "    -> Verified: True ARM64X dual-architecture binary."
-            }
-          }
-
-          if ($failed) {
-            throw "ARM64X verification failed! One or more DLLs do not contain true dual-architecture payloads."
-          }
-
-          Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
-
+      # Step 5: Check for Windows Binaries to Sign
       - name: Check for Windows Binaries to Sign
+        if: inputs.sign_binaries == true
         id: check_binaries
         shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
-          if ($files.Count -gt 0) {
-            Write-Host "Found $($files.Count) binary file(s) to sign."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=true"
-          } else {
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has_binaries=false"
-          }
+        run: pwsh ./scripts/04_merge_arm64x/03_check_binaries.ps1 -Folder "${{ github.workspace }}\raw_shared\dist"
 
+      # Step 6: Azure Login
       - name: Azure Login
-        if: steps.check_binaries.outputs.has_binaries == 'true'
+        if: inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      # Step 7: Sign Windows ARM64X Binaries
       - name: Sign Windows ARM64X Binaries
-        if: steps.check_binaries.outputs.has_binaries == 'true'
+        if: inputs.sign_binaries == true && steps.check_binaries.outputs.has_binaries == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -1208,23 +431,13 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # Step 8: Verify Signed Windows ARM64X Binaries
       - name: Verify Signed Windows ARM64X Binaries
         if: steps.check_binaries.outputs.has_binaries == 'true'
         shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "${{ github.workspace }}\raw_shared\dist" -Recurse -Include *.exe,*.dll
-          $failed = $false
-          foreach ($file in $files) {
-            Write-Host "Verifying $($file.FullName)..."
-            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status: $($sig.Status) | Subject: $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') {
-              Write-Error "Invalid signature: $($file.Name)"
-              $failed = $true
-            }
-          }
-          if ($failed) { exit 1 }
+        run: pwsh ./scripts/04_merge_arm64x/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\raw_shared\dist"
 
+      # Step 9: Upload Raw ARM64 Shared Artifact
       - name: Upload Raw ARM64 Shared Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -1232,6 +445,7 @@ jobs:
           path: raw_shared/dist
           retention-days: 1
 
+      # Step 10: Upload Raw ARM64 Static Artifact
       - name: Upload Raw ARM64 Static Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -1245,146 +459,94 @@ jobs:
   InnoSetup-windows-installer:
     name: Inno Setup Windows Multi-Arch Installer
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    # Execute ONLY if installers and Windows target are enabled:
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows == true &&
+      needs.validate-version.outputs.is_fork == 'false'
     runs-on: windows-latest
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
 
+      # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
-          if ($missing.Count -gt 0) {
-            Write-Error "Missing required secret(s): $($missing -join ', ')"
-            exit 1
-          }
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: pwsh ./scripts/05_innosetup_installer/01_validate_secrets.ps1
 
+      # Step 3: Download x64 Shared Artifact
       - name: Download x64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x64-shared-${{ github.run_id }}
           path: raw-shared-x64
 
+      # Step 4: Download x86 Shared Artifact
       - name: Download x86 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x86-shared-${{ github.run_id }}
           path: raw-shared-x86
 
+      # Step 5: Download ARM64 Shared Artifact
       - name: Download ARM64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-arm64-shared-${{ github.run_id }}
           path: raw-shared-arm64
 
+      # Step 6: Download Common Assets
       - name: Download Common Assets
         uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
+      # Step 7: Stage Multi-Arch Redistributables
       - name: Stage Multi-Arch Redistributables
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $redist = "$env:GITHUB_WORKSPACE\redist"
+        run: pwsh ./scripts/05_innosetup_installer/02_stage_redist.ps1 -WorkspaceDir "${{ github.workspace }}"
 
-          foreach ($arch in @('x64', 'x86', 'arm64')) {
-            $archDir = "$redist\$arch"
-            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
-            $src = "$env:GITHUB_WORKSPACE\raw-shared-$arch"
-
-            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
-            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
-            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
-
-            if (Test-Path "$src\providers") {
-              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
-            }
-            if (Test-Path "$src\engines") {
-              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
-            }
-          }
-
-          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
-
-          Write-Host "=== Multi-Arch Redistributables Staged ==="
-          Get-ChildItem $redist -Recurse | Select-Object -ExpandProperty FullName
-
+      # Step 8: Install InnoSetup
       - name: Install InnoSetup
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
           if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to install InnoSetup'; exit 1 }
 
+      # Step 9: Generate and Compile Multi-Arch Installer
       - name: Generate and Compile Multi-Arch Installer
         shell: pwsh
-        env:
-          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
-          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $version    = '${{ needs.validate-version.outputs.version }}'
-          $majorMinor = '${{ needs.validate-version.outputs.major_minor }}'
-          $appId      = '${{ needs.validate-version.outputs.inno_app_id }}'
-          $wsDir      = $env:GITHUB_WORKSPACE
-          $redistDir  = "$wsDir\redist"
-          $assetsDir  = "$wsDir\assets"
-          $pubName    = $env:APP_PUBLISHER
-          $pubUrl     = $env:APP_PUBLISHER_URL
+          pwsh ./scripts/05_innosetup_installer/03_build_installer.ps1 `
+            -Version "${{ needs.validate-version.outputs.version }}" `
+            -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
+            -InnoAppId "${{ needs.validate-version.outputs.inno_app_id }}" `
+            -PublisherName "${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}" `
+            -PublisherUrl "${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}"
 
-          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
-
-          # Substitute template parameters
-          $templatePath = "$wsDir\config\openssl-installer.iss.template"
-          $outFilename  = "openssl-$version-Windows-installer"
-          
-          $iss = Get-Content $templatePath -Raw
-          $iss = $iss.Replace('{{APP_ID}}', "{{$appId}")
-          $iss = $iss.Replace('{{VERSION}}', $version)
-          $iss = $iss.Replace('{{MAJOR_MINOR}}', $majorMinor)
-          $iss = $iss.Replace('{{APP_PUBLISHER}}', $pubName)
-          $iss = $iss.Replace('{{PUBLISHER_DISPLAY_NAME}}', $pubName)
-          $iss = $iss.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
-          $iss = $iss.Replace('{{OUTPUT_DIR}}', "$wsDir\installers")
-          $iss = $iss.Replace('{{OUTPUT_BASE_FILENAME}}', $outFilename)
-          $iss = $iss.Replace('{{REDIST_DIR}}', $redistDir)
-          $iss = $iss.Replace('{{ASSETS_DIR}}', $assetsDir)
-
-          $issPath = "$wsDir\openssl-installer.iss"
-          [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($false))
-
-          Write-Host "=== Generated Multi-Arch .iss ==="
-          Get-Content $issPath
-
-          $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*' -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty FullName -First 1
-          if (-not $iscc) {
-            $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
-            if ($isccCmd) { $iscc = $isccCmd.Source }
-          }
-          if (-not $iscc) { Write-Error 'ISCC.exe not found'; exit 1 }
-
-          Write-Host "ISCC: $iscc"
-          & $iscc $issPath
-          if ($LASTEXITCODE -ne 0) { Write-Error "InnoSetup failed (exit $LASTEXITCODE)"; exit 1 }
-          Write-Host "✅ Multi-Arch InnoSetup installer compiled."
-
+      # Step 10: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      # Step 11: Sign Installer (Azure Artifact Signing)
       - name: Sign Installer (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -1397,19 +559,13 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # Step 12: Verify Signed Installer
       - name: Verify Signed Installer
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.exe
-          if ($files.Count -eq 0) { Write-Error 'No installer file found to verify.'; exit 1 }
-          foreach ($file in $files) {
-            Write-Host "Verifying $($file.FullName)..."
-            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status: $($sig.Status)"
-            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature: $($sig.Status)"; exit 1 }
-          }
+        run: pwsh ./scripts/05_innosetup_installer/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
+      # Step 13: Upload Multi-Arch Installer
       - name: Upload Multi-Arch Installer
         uses: actions/upload-artifact@v7
         with:
@@ -1424,7 +580,10 @@ jobs:
   msix-windows-installers:
     name: Windows MSIX Framework (${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows == true &&
+      needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -1437,113 +596,60 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
 
+      # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_MSIX_PUBLISHER }}'))           { $missing += 'AZURE_MSIX_PUBLISHER' }
-          if ($missing.Count -gt 0) {
-            Write-Error "Missing required secret(s): $($missing -join ', ')"
-            exit 1
-          }
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          AZURE_MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
+        run: pwsh ./scripts/06_msix_installers/01_validate_secrets.ps1
 
+      # Step 3: Download Shared Artifact
       - name: Download Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-${{ matrix.arch }}-shared-${{ github.run_id }}
           path: raw-shared
 
+      # Step 4: Download Common Assets
       - name: Download Common Assets
         uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
+      # Step 5: Build Framework MSIX Package
       - name: Build Framework MSIX Package
         shell: powershell
-        env:
-          MSIX_PUBLISHER: ${{ secrets.AZURE_MSIX_PUBLISHER }}
-          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $version   = '${{ needs.validate-version.outputs.version }}'
-          $arch      = '${{ matrix.arch }}'
-          $msixArch  = '${{ matrix.msix_arch }}'
-          $publisher = $env:MSIX_PUBLISHER
-          $pubName   = $env:APP_PUBLISHER
-          $parts     = $version -split '\.'
-          $msixVer   = "$($parts[0]).$($parts[1]).$($parts[2]).0"
-          $wsDir     = $env:GITHUB_WORKSPACE
-          $staging   = "$wsDir\msix-staging"
-          $src       = "$wsDir\raw-shared"
+          pwsh ./scripts/06_msix_installers/02_build_package.ps1 `
+            -Version "${{ needs.validate-version.outputs.version }}" `
+            -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
+            -Arch "${{ matrix.arch }}" `
+            -MsixArch "${{ matrix.msix_arch }}" `
+            -Publisher "${{ secrets.AZURE_MSIX_PUBLISHER }}" `
+            -PublisherDisplayName "${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}"
 
-          # Locate MakeAppx.exe from Windows SDK
-          $makeAppx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' `
-            -Filter 'MakeAppx.exe' -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.DirectoryName -match '\\x64$' } |
-            Select-Object -ExpandProperty FullName -First 1
-          if (-not $makeAppx) { Write-Error 'MakeAppx.exe not found in Windows SDK'; exit 1 }
-
-          New-Item -ItemType Directory -Force -Path "$staging\Assets", "$wsDir\installers" | Out-Null
-
-          # Copy assets folder directly from repository (openssl-150x150.png, openssl-44x44.png, openssl-50x50.png)
-          if (Test-Path "$wsDir\assets") {
-            Copy-Item -Recurse -Force "$wsDir\assets" "$staging\"
-          } else {
-            Write-Error "Assets folder not found at $wsDir\assets"; exit 1
-          }
-
-          # Copy redistributable binaries & license
-          Copy-Item "$src\openssl.exe" $staging -ErrorAction SilentlyContinue
-          Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $staging
-          Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $staging
-          if (Test-Path "$src\providers") {
-            New-Item -ItemType Directory -Force -Path "$staging\providers" | Out-Null
-            Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$staging\providers"
-          }
-          if (Test-Path "$src\engines") {
-            New-Item -ItemType Directory -Force -Path "$staging\engines" | Out-Null
-            Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$staging\engines"
-          }
-          Copy-Item "common-assets\LICENSE.txt" $staging -ErrorAction SilentlyContinue
-
-          # Substitute AppxManifest template tokens
-          $xmlPublisher = [System.Security.SecurityElement]::Escape($publisher)
-          $xmlPubName   = [System.Security.SecurityElement]::Escape($pubName)
-          $majorMinor   = '${{ needs.validate-version.outputs.major_minor }}'
-
-          $templatePath = "$wsDir\config\AppxManifest.xml.template"
-          $xml = Get-Content $templatePath -Raw
-          $xml = $xml.Replace('{{MSIX_PUBLISHER}}', $xmlPublisher)
-          $xml = $xml.Replace('{{MSIX_VERSION}}', $msixVer)
-          $xml = $xml.Replace('{{MSIX_ARCH}}', $msixArch)
-          $xml = $xml.Replace('{{VERSION}}', $version)
-          $xml = $xml.Replace('{{MAJOR_MINOR}}', $majorMinor)
-          $xml = $xml.Replace('{{ARCH}}', $arch)
-          $xml = $xml.Replace('{{PUBLISHER_DISPLAY_NAME}}', $xmlPubName)
-
-          [IO.File]::WriteAllText("$staging\AppxManifest.xml", $xml, [Text.UTF8Encoding]::new($false))
-
-          # Pack individual Framework .msix
-          $msixOut = "$wsDir\installers\openssl-$version-Windows-$arch.msix"
-          & $makeAppx pack /d $staging /p $msixOut /o
-          if ($LASTEXITCODE -ne 0) { Write-Error "MakeAppx pack failed for $arch"; exit 1 }
-          Write-Host "✅ Framework MSIX created: $msixOut"
-
+      # Step 6: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      # Step 7: Sign MSIX Package (Azure Artifact Signing)
       - name: Sign MSIX Package (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -1556,19 +662,13 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # Step 8: Verify Signed MSIX Package
       - name: Verify Signed MSIX Package
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msix
-          if ($files.Count -eq 0) { Write-Error 'No .msix file found to verify.'; exit 1 }
-          foreach ($file in $files) {
-            Write-Host "Verifying $($file.FullName)..."
-            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status:  $($sig.Status)"
-            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') { Write-Error "Invalid signature on $($file.Name): $($sig.Status)"; exit 1 }
-          }
+        run: pwsh ./scripts/06_msix_installers/03_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
+      # Step 9: Upload MSIX Framework Artifact
       - name: Upload MSIX Framework Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -1583,7 +683,10 @@ jobs:
   wix-windows-installers:
     name: Windows MSI (${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
-    if: needs.validate-version.outputs.is_fork == 'false' && inputs.build_type == 'release'
+    if: |
+      inputs.build_installers == true &&
+      inputs.build_windows == true &&
+      needs.validate-version.outputs.is_fork == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -1596,136 +699,79 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
 
+      # Step 2: Validate Signing Secrets
       - name: Validate Signing Secrets
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}'))                { $missing += 'AZURE_CLIENT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}'))             { $missing += 'AZURE_CLIENT_SECRET' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}'))                { $missing += 'AZURE_TENANT_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SUBSCRIPTION_ID }}'))          { $missing += 'AZURE_SUBSCRIPTION_ID' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}'))     { $missing += 'AZURE_SIGNING_ACCOUNT_NAME' }
-          if ([string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}')) { $missing += 'AZURE_CERTIFICATE_PROFILE_NAME' }
-          if ($missing.Count -gt 0) {
-            Write-Error "Missing required secret(s): $($missing -join ', ')"
-            exit 1
-          }
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: pwsh ./scripts/07_wix_installers/01_validate_secrets.ps1
 
+      # Step 3: Download x64 Shared Artifact
       - name: Download x64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x64-shared-${{ github.run_id }}
           path: raw-shared-x64
 
+      # Step 4: Download x86 Shared Artifact
       - name: Download x86 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-x86-shared-${{ github.run_id }}
           path: raw-shared-x86
 
+      # Step 5: Download ARM64 Shared Artifact
       - name: Download ARM64 Shared Artifact
         uses: actions/download-artifact@v8
         with:
           name: raw-Windows-arm64-shared-${{ github.run_id }}
           path: raw-shared-arm64
 
+      # Step 6: Download Common Assets
       - name: Download Common Assets
         uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
 
+      # Step 7: Stage Redistributables & Convert LICENSE to RTF
       - name: Stage Redistributables & Convert LICENSE to RTF
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $wsDir     = $env:GITHUB_WORKSPACE
-          $redist    = "$wsDir\redist"
-          $assetsDir = "$wsDir\assets"
+        run: pwsh ./scripts/07_wix_installers/02_stage_redist.ps1 -WorkspaceDir "${{ github.workspace }}"
 
-          foreach ($arch in @('x64', 'x86', 'arm64')) {
-            $archDir = "$redist\$arch"
-            New-Item -ItemType Directory -Force -Path $archDir, "$archDir\providers", "$archDir\engines" | Out-Null
-            $src = "$wsDir\raw-shared-$arch"
-
-            Copy-Item "$src\openssl.exe" $archDir -ErrorAction SilentlyContinue
-            Get-ChildItem $src -Filter 'libcrypto-*.dll' | Copy-Item -Destination $archDir
-            Get-ChildItem $src -Filter 'libssl-*.dll'    | Copy-Item -Destination $archDir
-
-            if (Test-Path "$src\providers") {
-              Get-ChildItem "$src\providers" -Filter '*.dll' | Copy-Item -Destination "$archDir\providers"
-            }
-            if (Test-Path "$src\engines") {
-              Get-ChildItem "$src\engines" -Filter '*.dll' | Copy-Item -Destination "$archDir\engines"
-            }
-          }
-
-          Copy-Item "common-assets\LICENSE.txt" $redist -ErrorAction SilentlyContinue
-          Copy-Item "common-assets\LICENSE.rtf" $assetsDir -Force
-
+      # Step 8: Build MSI with WiX
       - name: Build MSI with WiX
         shell: pwsh
-        env:
-          APP_PUBLISHER: ${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}
-          APP_PUBLISHER_URL: ${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $version     = '${{ needs.validate-version.outputs.version }}'
-          $majorMinor  = '${{ needs.validate-version.outputs.major_minor }}'
-          $arch        = '${{ matrix.arch }}'
-          $wixArch     = '${{ matrix.wix_arch }}'
-          $pfFolder    = '${{ matrix.pf_folder }}'
-          $wsDir       = $env:GITHUB_WORKSPACE
-          $parts       = $version -split '\.'
-          $fourPartVer = "$($parts[0]).$($parts[1]).$($parts[2]).0"
-          $pubName     = $env:APP_PUBLISHER
-          $pubUrl      = $env:APP_PUBLISHER_URL
+          pwsh ./scripts/07_wix_installers/03_build_msi.ps1 `
+            -Version "${{ needs.validate-version.outputs.version }}" `
+            -MajorMinor "${{ needs.validate-version.outputs.major_minor }}" `
+            -Arch "${{ matrix.arch }}" `
+            -WixArch "${{ matrix.wix_arch }}" `
+            -PfFolder "${{ matrix.pf_folder }}" `
+            -PublisherName "${{ vars.PUBLISHER_DISPLAY_NAME || 'TaurusTLS Developers' }}" `
+            -PublisherUrl "${{ vars.PUBLISHER_URL || 'https://github.com/TaurusTLS-Developers/OpenSSL-Distribution' }}"
 
-          # Deterministic UpgradeCode per (Major.Minor + Architecture)
-          $bytes       = [System.Text.Encoding]::UTF8.GetBytes("taurustls.openssl.wix.$majorMinor.$arch")
-          $hash        = [System.Security.Cryptography.MD5]::Create().ComputeHash($bytes)
-          $upgradeCode = [System.Guid]::new($hash).ToString().ToUpper()
-          Write-Host "Resolved UpgradeCode for $majorMinor ($arch): $upgradeCode"
-
-          # 1. Install WiX Toolset v5 via dotnet tool
-          Write-Host "Installing WiX Toolset v5..."
-          dotnet tool install --global wix --version 5.0.2
-          wix extension add --global WixToolset.UI.wixext/5.0.2
-
-          # 2. Populate openssl.wxs from template
-          $templatePath = "$wsDir\config\openssl.wxs.template"
-          $wxs = Get-Content $templatePath -Raw
-          $wxs = $wxs.Replace('{{VERSION}}', $version)
-          $wxs = $wxs.Replace('{{VERSION_FOUR_PART}}', $fourPartVer)
-          $wxs = $wxs.Replace('{{MAJOR_MINOR}}', $majorMinor)
-          $wxs = $wxs.Replace('{{ARCH}}', $arch)
-          $wxs = $wxs.Replace('{{UPGRADE_CODE}}', $upgradeCode)
-          $wxs = $wxs.Replace('{{PROGRAM_FILES_FOLDER}}', $pfFolder)
-          $wxs = $wxs.Replace('{{APP_PUBLISHER}}', $pubName)
-          $wxs = $wxs.Replace('{{APP_PUBLISHER_URL}}', $pubUrl)
-          $wxs = $wxs.Replace('{{REDIST_DIR}}', "$wsDir\redist")
-          $wxs = $wxs.Replace('{{ASSETS_DIR}}', "$wsDir\assets")
-
-          $wxsPath = "$wsDir\openssl.wxs"
-          [IO.File]::WriteAllText($wxsPath, $wxs, [Text.UTF8Encoding]::new($false))
-
-          # 3. Build MSI
-          New-Item -ItemType Directory -Force -Path "$wsDir\installers" | Out-Null
-          $msiOut = "$wsDir\installers\openssl-$version-Windows-$arch.msi"
-
-          Write-Host "Compiling MSI: $msiOut"
-          wix build $wxsPath -arch $wixArch -ext WixToolset.UI.wixext -o $msiOut
-          if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)" }
-          Write-Host "✅ MSI Created: $msiOut"
-
+      # Step 9: Azure Login
       - name: Azure Login
+        if: inputs.sign_binaries == true
         uses: azure/login@v3
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      # Step 10: Sign MSI (Azure Artifact Signing)
       - name: Sign MSI (Azure Artifact Signing)
+        if: inputs.sign_binaries == true
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ secrets.AZURE_CODESIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
@@ -1738,19 +784,13 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # Step 11: Verify Signed MSI
       - name: Verify Signed MSI
+        if: inputs.sign_binaries == true
         shell: pwsh
-        run: |
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\installers\*" -Include *.msi
-          if ($files.Count -eq 0) { throw 'No .msi files found to verify.' }
-          foreach ($file in $files) {
-            Write-Host "Verifying $($file.FullName)..."
-            $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-            Write-Host "  Status:  $($sig.Status)"
-            Write-Host "  Subject: $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') { throw "Invalid signature: $($file.Name)" }
-          }
+        run: pwsh ./scripts/07_wix_installers/04_verify_signatures.ps1 -Folder "${{ github.workspace }}\installers"
 
+      # Step 12: Upload MSI Artifact
       - name: Upload MSI Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -1762,40 +802,28 @@ jobs:
   # =========================================================================
   # 4. PACKAGE RELEASE (Fan-In Matrix)
   # =========================================================================
-
   package-release:
     name: Package (${{ matrix.label }} ${{ matrix.arch }})
     needs: [validate-version, build-common-assets, compile-binaries, merge-windows-arm64x]
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Windows packaging moved to ubuntu-latest for speed and native 'zip' support
-          - { label: Windows, arch: x64, runner: ubuntu-latest }
-          - { label: Windows, arch: x86, runner: ubuntu-latest }
-          - { label: Windows, arch: arm64, runner: ubuntu-latest }
-          
-          # Linux & Android
-          - { label: Linux, arch: x64, runner: ubuntu-latest }
-          - { label: Linux, arch: arm64, runner: ubuntu-latest }
-          - { label: Android, arch: arm64, runner: ubuntu-latest }
-          - { label: Android, arch: arm, runner: ubuntu-latest }
-          
-          # Apple platforms MUST use macOS runners for lipo, otool, install_name_tool, and Apple strip
-          - { label: macOS, arch: universal, runner: macos-14 }
-          - { label: iOS, arch: arm64, runner: macos-14 }
-          - { label: iOS, arch: sim-arm64, runner: macos-14 }
-          
+        include: ${{ fromJSON(needs.validate-version.outputs.package_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
       
+      # Step 2: Download Common Assets
       - name: Download Common Assets
         uses: actions/download-artifact@v8
         with:
           name: openssl-common-assets-${{ github.run_id }}
           path: common-assets
           
+      # Step 3: Download Raw Binaries (Standard)
       - name: Download Raw Binaries (Standard)
         if: matrix.label != 'macOS'
         uses: actions/download-artifact@v8
@@ -1804,6 +832,7 @@ jobs:
           path: raw-binaries
           merge-multiple: false
           
+      # Step 4: Download Raw Binaries (macOS Universal)
       - name: Download Raw Binaries (macOS Universal)
         if: matrix.label == 'macOS'
         uses: actions/download-artifact@v8
@@ -1812,186 +841,49 @@ jobs:
           path: raw-binaries
           merge-multiple: false
 
+      # Step 5: Merge Binaries and Assets
       - name: Merge Binaries and Assets
-        if: matrix.label != 'macOS'
+        if: |
+          matrix.label != 'macOS' && 
+          (
+            (matrix.label == 'Windows' && inputs.build_windows == true) || 
+            (matrix.label == 'Linux' && inputs.build_linux == true) || 
+            (matrix.label == 'Android' && inputs.build_android == true) || 
+            (matrix.label == 'iOS' && inputs.build_ios == true)
+          )
         shell: bash
-        run: |
-          # Merge contents of downloaded raw artifacts into dist/
-          # Standard behavior: download-artifact creates subdirectories named after artifacts.
-          # Flattened behavior: If only one artifact exists, it may be extracted directly.
-          
-          HAS_RAW_SUBDIRS=false
-          for d in raw-binaries/raw-*/; do
-            if [ -d "$d" ]; then
-              HAS_RAW_SUBDIRS=true
-              break
-            fi
-          done
+        run: bash ./scripts/08_package_release/01_merge_binaries.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
-          if [ "$HAS_RAW_SUBDIRS" = true ]; then
-            echo "Detected nested artifact structure. Merging subdirectories..."
-            for d in raw-binaries/raw-*/; do
-              if [ -d "$d" ]; then
-                echo "Merging $d contents into dist/"
-                cp -R "$d". dist/
-              fi
-            done
-          else
-            echo "Detected flattened artifact structure. Merging raw-binaries/ directly..."
-            cp -R raw-binaries/. dist/
-          fi
-
-      - name: Rename macOS artifacts (remove run_id suffix)
-        if: matrix.label == 'macOS'
+      # Step 6: Organize & Lipo (macOS Universal)
+      - name: Build macOS Universal Binaries
+        if: matrix.label == 'macOS' && inputs.build_macos == true
         shell: bash
-        run: |
-          cd raw-binaries
-          for d in raw-macOS-*-${{ github.run_id }}; do
-            if [ -d "$d" ]; then
-              mv "$d" "${d%-*}"
-            fi
-          done
+        run: bash ./scripts/08_package_release/02_build_macos_universal.sh "${{ github.workspace }}/raw-binaries" "${{ github.workspace }}/dist"
 
-      - name: Organize & Lipo (macOS Universal)
-        if: matrix.label == 'macOS'
-        shell: bash
-        run: |
-          # 1. Relocate and Strip individual architectures
-          for arch in x64 arm64; do
-            BASE_DIR="raw-binaries/raw-macOS-$arch-shared"
-            
-            find "$BASE_DIR" -type f \( -name "*.dylib" -o -name "*.so" -o -name "openssl" \) | while read -r target_file; do
-              if [[ "$target_file" == *"openssl" ]]; then
-                strip "$target_file" || true
-              else
-                strip -x "$target_file" || true
-              fi
-              
-              if [[ "$target_file" == *".dylib" ]]; then
-                install_name_tool -id "@rpath/$(basename "$target_file")" "$target_file" || true
-              fi
-              
-              DEPS=$(otool -L "$target_file" 2>/dev/null | awk '/\/usr\/local\/lib\/lib/ {print $1}')
-              for dep in $DEPS; do
-                depname=$(basename "$dep")
-                if [[ "$target_file" == *"engines"* ]] || [[ "$target_file" == *"providers"* ]]; then
-                  install_name_tool -change "$dep" "@loader_path/../$depname" "$target_file" || true
-                else
-                  install_name_tool -change "$dep" "@loader_path/$depname" "$target_file" || true
-                fi
-              done
-              install_name_tool -add_rpath "@executable_path" "$target_file" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path" "$target_file" 2>/dev/null || true
-            done
-            
-            find "raw-binaries/raw-macOS-$arch-static" -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
-          done
-          
-          # 2. Combine with Lipo
-          mkdir -p dist/{engines,providers,lib/static}
-          
-          lipo_file() {
-            local rel_path=$1
-            local dest_path=$2
-            local f_x86="raw-binaries/raw-macOS-x64-shared/$rel_path"
-            local f_arm="raw-binaries/raw-macOS-arm64-shared/$rel_path"
-            
-            if [ ! -f "$f_x86" ]; then
-              f_x86="raw-binaries/raw-macOS-x64-static/$rel_path"
-              f_arm="raw-binaries/raw-macOS-arm64-static/$rel_path"
-            fi
-            
-            if [ ! -f "$f_x86" ] || [ ! -f "$f_arm" ]; then return 0; fi
-            lipo -create -output "$dest_path" "$f_x86" "$f_arm"
-          }
-          
-          lipo_file "openssl" "dist/openssl"
-          
-          find raw-binaries/raw-macOS-x64-shared -maxdepth 1 -type f -name "*.dylib" | while read -r f; do
-            lipo_file "$(basename "$f")" "dist/$(basename "$f")"
-          done
-          
-          [ -d "raw-binaries/raw-macOS-x64-shared/engines" ] && find raw-binaries/raw-macOS-x64-shared/engines -type f -name "*.dylib" | while read -r f; do
-            lipo_file "engines/$(basename "$f")" "dist/engines/$(basename "$f")"
-          done
-          
-          [ -d "raw-binaries/raw-macOS-x64-shared/providers" ] && find raw-binaries/raw-macOS-x64-shared/providers -type f -name "*.dylib" | while read -r f; do
-            lipo_file "providers/$(basename "$f")" "dist/providers/$(basename "$f")"
-          done
-          
-          find raw-binaries/raw-macOS-x64-static/lib/static -type f -name "*.a" | while read -r f; do
-            lipo_file "lib/static/$(basename "$f")" "dist/lib/static/$(basename "$f")"
-          done
-          
-          cp raw-binaries/raw-macOS-x64-shared/install_symlinks.sh dist/ 2>/dev/null || true
-
+      # Step 7: Finalize Package
       - name: Finalize Package
+        if: |
+          (matrix.label == 'Windows' && inputs.build_windows == true) ||
+          (matrix.label == 'Linux' && inputs.build_linux == true) ||
+          (matrix.label == 'macOS' && inputs.build_macos == true) ||
+          (matrix.label == 'Android' && inputs.build_android == true) ||
+          (matrix.label == 'iOS' && inputs.build_ios == true)
         shell: bash
-        run: |
-          # Copy Common Assets
-          mkdir -p dist/include dist/doc
-          cp -R common-assets/include/* dist/include/ 2>/dev/null || true
-          cp -R common-assets/share/doc/* dist/doc/ 2>/dev/null || true
-          
-          # Copy License and README from common assets
-          cp common-assets/LICENSE.txt dist/ 2>/dev/null || true
-          cp common-assets/README.txt dist/ 2>/dev/null || true
-          
-          # Create Metadata
-          if [ "${{ inputs.build_type }}" == "branch" ]; then
-            echo "branch: ${{ needs.validate-version.outputs.slugified_version }}" > dist/version.txt
-          else
-            echo "${{ needs.validate-version.outputs.slugified_version }}" > dist/version.txt
-          fi
-          
-          # Create Symlink Script (POSIX only, if not already present)
-          if [ ! -f dist/install_symlinks.sh ]; then
-            if [ "${{ matrix.label }}" == "Linux" ] || [ "${{ matrix.label }}" == "macOS" ]; then
-              echo "#!/bin/sh" > dist/install_symlinks.sh
-              echo "echo \"Restoring shared library symlinks...\"" >> dist/install_symlinks.sh
-              
-              cd dist
-              for lib in libcrypto libssl; do
-                if [ "${{ matrix.label }}" == "Linux" ]; then
-                  REAL_FILE=$(ls ${lib}.so.* 2>/dev/null | head -n 1)
-                  if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.so" >> install_symlinks.sh
-                  fi
-                else
-                  REAL_FILE=$(ls ${lib}.*.dylib 2>/dev/null | head -n 1)
-                  if [ -n "$REAL_FILE" ]; then
-                    echo "ln -sf $REAL_FILE ${lib}.dylib" >> install_symlinks.sh
-                  fi
-                fi
-              done
-              chmod +x install_symlinks.sh
-              cd - > /dev/null
-            fi
-          fi
-          
-          find dist -type d -empty -delete
-          
-          ARCHIVE_NAME="openssl-${{ needs.validate-version.outputs.artifact_version }}-${{ matrix.label }}-${{ matrix.arch }}.zip"
-          cd dist
-          zip -r -y "../$ARCHIVE_NAME" .
-          cd ..
-          
-          echo "ARCHIVE_FILE=$ARCHIVE_NAME" >> $GITHUB_ENV
+        run: bash ./scripts/08_package_release/03_finalize_package.sh "${{ matrix.label }}" "${{ matrix.arch }}" "${{ inputs.build_type || 'release' }}" "${{ needs.validate-version.outputs.artifact_version }}" "${{ needs.validate-version.outputs.slugified_version }}" "${{ github.workspace }}/common-assets" "${{ github.workspace }}/dist" "${{ github.workspace }}"
 
+      # Step 8: Upload Final Archive
       - name: Upload Final Archive
+        if: |
+          (matrix.label == 'Windows' && inputs.build_windows == true) ||
+          (matrix.label == 'Linux' && inputs.build_linux == true) ||
+          (matrix.label == 'macOS' && inputs.build_macos == true) ||
+          (matrix.label == 'Android' && inputs.build_android == true) ||
+          (matrix.label == 'iOS' && inputs.build_ios == true)
         uses: actions/upload-artifact@v7
         with:
           name: openssl-${{ needs.validate-version.outputs.artifact_version }}-${{ matrix.label }}-${{ matrix.arch }}
           path: ${{ env.ARCHIVE_FILE }}
           archive: false
-          retention-days: 5
-
-      - name: Upload Build Metadata (Once)
-        if: matrix.label == 'Linux' && matrix.arch == 'x64' && needs.validate-version.outputs.is_fork == 'false'
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-metadata
-          path: dist/version.txt
           retention-days: 5
 
   # =========================================================================
@@ -2009,29 +901,12 @@ jobs:
     permissions:
       actions: write
     steps:
-      - name: Delete Intermediate Artifacts (raw, slice, common-assets)
+      # Step 1: Checkout Orchestrator Repository
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v6
+
+      # Step 2: Delete Intermediate Artifacts (raw, slice, common-assets)
+      - name: Delete Raw and Common Artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Fetching artifacts for run ${{ github.run_id }}..."
-          
-          # List all artifacts for THIS run
-          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --paginate)
-          
-          # Filter for IDs of artifacts matching:
-          # - 'raw-*'
-          # - 'slice-*' (ARM64X compilation slices)
-          # - 'openssl-common-assets-*'
-          IDS=$(echo "$ARTIFACTS" | jq -r ".artifacts[] | select (.name | ((startswith(\"raw-\") or startswith(\"slice-\")) and endswith(\"-${{ github.run_id }}\")) or . == \"openssl-common-assets-${{ github.run_id }}\") | .id")
-          
-          if [ -z "$IDS" ] || [ "$IDS" == "null" ]; then
-            echo "No intermediate artifacts found to delete."
-            exit 0
-          fi
-          
-          for id in $IDS; do
-            echo "Deleting intermediate artifact ID: $id"
-            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id || echo "Failed to delete artifact ID: $id" ; true
-          done
-          
-          echo "✅ Intermediate artifact cleanup complete."
+        run: bash ./scripts/09_cleanup_artifacts/01_delete_artifacts.sh "${{ github.run_id }}" "${{ github.repository }}"
