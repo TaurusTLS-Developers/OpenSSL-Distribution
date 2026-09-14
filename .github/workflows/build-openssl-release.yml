@@ -1,0 +1,20 @@
+name: Build for Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenSSL Release Version (e.g. 3.5.6)'
+        required: true
+        type: string
+        default: ''
+
+jobs:
+  placeholder:
+    name: Placeholder Stub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notice
+        run: |
+          echo "This is a placeholder stub on the main branch."
+          echo "To test new features, run this workflow selecting a development branch from the dropdown."
