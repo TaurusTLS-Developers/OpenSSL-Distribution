@@ -1,0 +1,63 @@
+name: Build for Release
+run-name: Build Official OpenSSL Release ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenSSL Release Version (Strict format: Major.Minor.Patch, e.g. 3.4.0)'
+        required: true
+        type: string
+        default: '3.4.0'
+
+jobs:
+  # =========================================================================
+  # PRE-FLIGHT: Validate Strict Major.Minor.Patch Format
+  # =========================================================================
+  validate-release-input:
+    name: Validate Release Version Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Strict SemVer (Major.Minor.Patch)
+        run: |
+          VERSION="${{ inputs.version }}"
+          echo "Validating input version: '$VERSION'..."
+
+          # Strictly enforce numeric Major.Minor.Patch (no alphas, betas, or trailing text)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ ERROR: Invalid version format '$VERSION'!"
+            echo "------------------------------------------------------------------------"
+            echo "Official releases require strictly 3 numeric parts: Major.Minor.Patch"
+            echo "Examples of valid versions: 3.0.15, 3.4.0, 4.0.0"
+            echo "------------------------------------------------------------------------"
+            echo "Pre-release suffixes (e.g. 4.1.0-alpha1, 3.5.0-beta2) are rejected here"
+            echo "because Windows installers (MSIX/WiX) require 4-part numeric versions."
+            echo ""
+            echo "👉 For testing pre-releases, run 'build-openssl.yml' directly with"
+            echo "   'build_installers: false' and 'build_type: release'."
+            exit 1
+          fi
+
+          echo "✅ Version '$VERSION' is a valid official release format."
+
+  # =========================================================================
+  # CALL ORCHESTRATOR: Execute Full Production Release Build
+  # =========================================================================
+  trigger-release-build:
+    name: Execute Release Pipeline
+    needs: validate-release-input
+    uses: ./.github/workflows/build-openssl.yml
+    with:
+      version: ${{ inputs.version }}
+      build_type: release
+      sign_binaries: true
+      build_installers: true
+      build_windows: true
+      build_linux: true
+      build_macos: true
+      build_android: true
+      build_ios: true
+      ignore_eol: false
+      keep_raw_artifacts: false
+    secrets: inherit
+    
