@@ -46,6 +46,10 @@ jobs:
   trigger-release-build:
     name: Execute Release Pipeline
     needs: validate-release-input
+    permissions:
+      actions: write
+      id-token: write
+      contents: read
     uses: ./.github/workflows/build-openssl.yml
     with:
       version: ${{ inputs.version }}
@@ -60,4 +64,3 @@ jobs:
       ignore_eol: false
       keep_raw_artifacts: false
     secrets: inherit
-    
