@@ -96,7 +96,7 @@ jobs:
                 echo "⚠️ Dry run enabled. Skipping build trigger."
               else
                 echo "Triggering build workflow..."
-                gh workflow run build-openssl.yml -f version="$VERSION" -f build_type="release"
+                gh workflow run build-openssl-release.yml -f version="$VERSION"
                 echo "Build triggered for $VERSION."
               fi
             fi
