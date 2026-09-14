@@ -161,7 +161,7 @@ jobs:
 
       # Step 3: Upload Build Metadata (Universal)
       - name: Upload Build Metadata (Universal)
-        if: needs.validate-version.outputs.is_fork == 'false'
+        if: steps.check.outputs.is_fork == 'false'
         uses: actions/upload-artifact@v7
         with:
           name: build-metadata
