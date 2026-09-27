@@ -124,7 +124,7 @@ jobs:
   # =========================================================================
   validate-version:
     name: Validate Inputs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
     outputs:
@@ -174,7 +174,7 @@ jobs:
   build-common-assets:
     name: Build Headers & Docs
     needs: validate-version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # Step 1: Checkout Orchestrator Repository
       - name: Checkout Orchestrator Repo
@@ -892,7 +892,7 @@ jobs:
   cleanup-artifacts:
     name: Cleanup Intermediate Artifacts
     needs: [package-release, InnoSetup-windows-installer, msix-windows-installers, wix-windows-installers]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: |
       always() &&
       inputs.keep_raw_artifacts != true &&
