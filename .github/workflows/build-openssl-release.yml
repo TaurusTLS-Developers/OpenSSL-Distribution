@@ -16,7 +16,7 @@ jobs:
   # =========================================================================
   validate-release-input:
     name: Validate Release Version Format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Verify Strict SemVer (Major.Minor.Patch)
         run: |
