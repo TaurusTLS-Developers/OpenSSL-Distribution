@@ -99,8 +99,10 @@ if /i "%LINKAGE%"=="shared" (
     if exist "%INSTALL_TEMP%\lib\engines-3" copy /Y "%INSTALL_TEMP%\lib\engines-3\*.dll" "%STAGED_DIST%\engines\"
     if exist "%INSTALL_TEMP%\lib\engines-4" copy /Y "%INSTALL_TEMP%\lib\engines-4\*.dll" "%STAGED_DIST%\engines\"
     if exist "%INSTALL_TEMP%\lib\ossl-modules" copy /Y "%INSTALL_TEMP%\lib\ossl-modules\*.dll" "%STAGED_DIST%\providers\"
+    if exist "%SRC_DIR%\providers\legacy.lib" copy /Y "%SRC_DIR%\providers\legacy.lib" "%STAGED_DIST%\lib\import\legacy.lib"
 ) else (
     copy /Y "%INSTALL_TEMP%\lib\*.lib" "%STAGED_DIST%\lib\static\"
+    if exist "%SRC_DIR%\providers\liblegacy.lib" copy /Y "%SRC_DIR%\providers\liblegacy.lib" "%STAGED_DIST%\lib\static\liblegacy.lib"
 )
 
 :: 9. Strict Assertion: Ensure files were actually staged
@@ -108,6 +110,13 @@ dir /b /s "%STAGED_DIST%\*.lib" "%STAGED_DIST%\*.dll" "%STAGED_DIST%\*.exe" >nul
 if errorlevel 1 (
     echo FATAL: No binary or library files were staged into '%STAGED_DIST%'!
     exit /b 1
+)
+
+if /i "%LINKAGE%"=="static" (
+    if not exist "%STAGED_DIST%\lib\static\liblegacy.lib" (
+        echo FATAL: Staged static legacy library '%STAGED_DIST%\lib\static\liblegacy.lib' was not found!
+        exit /b 1
+    )
 )
 
 echo [COMPILE-WIN] Staging completed successfully for %TARGET_NAME%.

@@ -117,8 +117,20 @@ if /i "%LINKAGE%"=="shared" (
     :: Stage engine DSO objects across the build tree (including crypto/pem/loader_attic-dso-pvkfmt.obj)
     for /r . %%f in (*-dso-*.obj) do @copy /Y "%%f" "%STAGED_OUT%\engines\" >nul 2>&1
     if exist "engines\*.obj" copy /Y "engines\*.obj" "%STAGED_OUT%\engines\" >nul
+
+    :: Harvest shared legacy import library
+    if exist "providers\legacy.lib" copy /Y "providers\legacy.lib" "%STAGED_OUT%\lib\import\" >nul
 ) else (
     copy /Y "%INSTALL_TEMP%\lib\*.lib" "%STAGED_OUT%\lib\static\" >nul
+    if exist "providers\liblegacy.lib" copy /Y "providers\liblegacy.lib" "%STAGED_OUT%\lib\static\" >nul
+)
+
+:: 9. Strict Assertion: Ensure static legacy library exists for static slices
+if /i "%LINKAGE%"=="static" (
+    if not exist "%STAGED_OUT%\lib\static\liblegacy.lib" (
+        echo FATAL: Staged static legacy library '%STAGED_OUT%\lib\static\liblegacy.lib' was not found!
+        exit /b 1
+    )
 )
 
 echo [COMPILE-SLICE] Slice staging completed successfully for %TARGET_NAME%.

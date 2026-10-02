@@ -13,12 +13,17 @@ LINKAGE="${2:-${TARGET_LINKAGE:-shared}}"
 WS_DIR="${GITHUB_WORKSPACE:-$PWD}"
 PREFIX="${3:-${TARGET_PREFIX:-$WS_DIR/raw_artifact/usr/local}}"
 DIST_DIR="${4:-${TARGET_DIST:-$WS_DIR/raw_artifact/dist}}"
+SRC_DIR="${5:-${OPENSSL_SRC:-$WS_DIR/openssl-src}}"
+if [ ! -d "$SRC_DIR" ]; then
+    SRC_DIR="$WS_DIR"
+fi
 
 echo "================================================================"
 echo " [ORGANIZE-POSIX] Platform:    $LABEL"
 echo " [ORGANIZE-POSIX] Linkage:     $LINKAGE"
 echo " [ORGANIZE-POSIX] Prefix Dir:  $PREFIX"
 echo " [ORGANIZE-POSIX] Target Dist: $DIST_DIR"
+echo " [ORGANIZE-POSIX] Source Dir:  $SRC_DIR"
 echo "================================================================"
 
 if [ ! -d "$PREFIX" ]; then
@@ -94,10 +99,24 @@ else
     # Static libraries
     find "$PREFIX" -type f -name "*.a" -exec cp -f {} "$DIST_DIR/lib/static/" \; 2>/dev/null || true
 
+    # Harvest uninstalled static legacy provider library
+    if [ -f "$SRC_DIR/providers/liblegacy.a" ]; then
+        cp -f "$SRC_DIR/providers/liblegacy.a" "$DIST_DIR/lib/static/liblegacy.a"
+        echo "  [+] Harvested static liblegacy.a"
+        if [ "$LABEL" != "macOS" ]; then
+            strip -S "$DIST_DIR/lib/static/liblegacy.a" 2>/dev/null || true
+        fi
+    fi
+
     # Strip symbols from static archives (Non-macOS)
     if [ "$LABEL" != "macOS" ]; then
         echo "✂️ Stripping static archives..."
         find "$DIST_DIR/lib/static" -type f -name "*.a" -exec strip -S {} + 2>/dev/null || true
+    fi
+
+    if [ ! -f "$DIST_DIR/lib/static/liblegacy.a" ]; then
+        echo "FATAL: Static liblegacy.a was not found in '$DIST_DIR/lib/static/'!"
+        exit 1
     fi
 fi
 

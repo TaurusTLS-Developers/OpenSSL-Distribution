@@ -114,11 +114,11 @@ esac
 # 4. Run OpenSSL Configure
 echo "⚙️ Configuring OpenSSL for $TARGET ($LINKAGE)..."
 if [ "$LINKAGE" == "shared" ]; then
-    ./Configure "$TARGET" shared no-tests $EXTRA_FLAGS --prefix="$PREFIX"
+    ./Configure "$TARGET" shared no-tests enable-legacy $EXTRA_FLAGS --prefix="$PREFIX"
 else
-    if ! ./Configure "$TARGET" no-shared no-apps no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"; then
+    if ! ./Configure "$TARGET" no-shared no-apps no-module no-tests enable-legacy $EXTRA_FLAGS --prefix="$PREFIX"; then
         echo "⚠️ 'no-apps' not supported in this OpenSSL version. Falling back without no-apps..."
-        ./Configure "$TARGET" no-shared no-module no-tests $EXTRA_FLAGS --prefix="$PREFIX"
+        ./Configure "$TARGET" no-shared no-module no-tests enable-legacy $EXTRA_FLAGS --prefix="$PREFIX"
     fi
 fi
 
