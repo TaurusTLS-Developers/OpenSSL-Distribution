@@ -75,29 +75,38 @@ if (-not $arm64Static)   { throw "FATAL: Could not find Native ARM64 Static slic
 if (-not $arm64ecShared) { throw "FATAL: Could not find ARM64EC Shared slice in $slicesDir!" }
 if (-not $arm64ecStatic) { throw "FATAL: Could not find ARM64EC Static slice in $slicesDir!" }
 
-# Verify required input static libraries exist for both crypto and ssl before calling lib.exe
+# Verify required input static libraries exist for crypto, ssl, and legacy before calling lib.exe
 $arm64StaticCrypto   = Join-Path $arm64Static "lib\static\libcrypto.lib"
 $arm64ecStaticCrypto = Join-Path $arm64ecStatic "lib\static\libcrypto.lib"
 $arm64StaticSsl      = Join-Path $arm64Static "lib\static\libssl.lib"
 $arm64ecStaticSsl    = Join-Path $arm64ecStatic "lib\static\libssl.lib"
+$arm64StaticLegacy   = Join-Path $arm64Static "lib\static\liblegacy.lib"
+$arm64ecStaticLegacy = Join-Path $arm64ecStatic "lib\static\liblegacy.lib"
 
 if (-not (Test-Path $arm64StaticCrypto))   { throw "FATAL: Native ARM64 static libcrypto not found: $arm64StaticCrypto" }
 if (-not (Test-Path $arm64ecStaticCrypto)) { throw "FATAL: ARM64EC static libcrypto not found: $arm64ecStaticCrypto" }
 if (-not (Test-Path $arm64StaticSsl))      { throw "FATAL: Native ARM64 static libssl not found: $arm64StaticSsl" }
 if (-not (Test-Path $arm64ecStaticSsl))    { throw "FATAL: ARM64EC static libssl not found: $arm64ecStaticSsl" }
+if (-not (Test-Path $arm64StaticLegacy))   { throw "FATAL: Native ARM64 static liblegacy not found: $arm64StaticLegacy" }
+if (-not (Test-Path $arm64ecStaticLegacy)) { throw "FATAL: ARM64EC static liblegacy not found: $arm64ecStaticLegacy" }
 
 Write-Host "✅ All required static input archives verified."
 
 # 1. MERGE STATIC LIBRARIES (lib.exe /MACHINE:ARM64X)
 Write-Host "`n=== 1. Merging Static Libraries (lib.exe /MACHINE:ARM64X) ==="
-cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$DistStaticDir\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
+cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libcrypto.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`""
 if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libcrypto merge failed with exit code $LASTEXITCODE" }
 
-cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$DistStaticDir\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
+cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`""
 if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library libssl merge failed with exit code $LASTEXITCODE" }
 
-Copy-Item "$arm64Static\lib\static\*.lib" "$DistStaticDir\lib\static\arm64\" -Force
-Copy-Item "$arm64ecStatic\lib\static\*.lib" "$DistStaticDir\lib\static\arm64ec\" -Force
+cmd.exe /c "call `"$vcVars`" amd64_arm64 && lib.exe /NOLOGO /MACHINE:ARM64X /OUT:`"$distStatic\lib\static\liblegacy.lib`" `"$arm64Static\lib\static\liblegacy.lib`" `"$arm64ecStatic\lib\static\liblegacy.lib`""
+if ($LASTEXITCODE -ne 0) { throw "FATAL: Static library liblegacy merge failed with exit code $LASTEXITCODE" }
+
+Copy-Item "$arm64Static\lib\static\*.lib" "$distStatic\lib\static\arm64\" -Force
+Copy-Item "$arm64ecStatic\lib\static\*.lib" "$distStatic\lib\static\arm64ec\" -Force
+Copy-Item "$arm64Static\lib\static\liblegacy.lib" "$distStatic\lib\static\arm64\" -Force
+Copy-Item "$arm64ecStatic\lib\static\liblegacy.lib" "$distStatic\lib\static\arm64ec\" -Force
 
 # 2. LINK TRUE ARM64X CORE DLLs (libcrypto & libssl)
 Write-Host "`n=== 2. Linking True ARM64X Core Libraries ==="
@@ -114,6 +123,15 @@ if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking faile
 # Link libssl-3-arm64.dll (ARM64X)
 cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$DistSharedDir\libssl-3-arm64.dll`" /IMPLIB:`"$DistSharedDir\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$DistSharedDir\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
 if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
+
+# Handle legacy import library
+if (Test-Path "$arm64Shared\lib\import\legacy.lib") {
+    Copy-Item "$arm64Shared\lib\import\legacy.lib" "$distShared\lib\import\legacy.lib" -Force
+    Copy-Item "$arm64Shared\lib\import\legacy.lib" "$distShared\lib\import\arm64\legacy.lib" -Force
+}
+if (Test-Path "$arm64ecShared\lib\import\legacy.lib") {
+    Copy-Item "$arm64ecShared\lib\import\legacy.lib" "$distShared\lib\import\arm64ec\legacy.lib" -Force
+}
 
 Copy-Item "$arm64Shared\lib\import\*.lib" "$DistSharedDir\lib\import\arm64\" -Force
 Copy-Item "$arm64ecShared\lib\import\*.lib" "$DistSharedDir\lib\import\arm64ec\" -Force

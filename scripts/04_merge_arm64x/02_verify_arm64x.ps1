@@ -7,12 +7,22 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$DistDir
+    [string]$DistDir,
+    [string]$StaticDistDir
 )
 
 $ErrorActionPreference = 'Stop'
 
 $dist = if ($DistDir) { $DistDir } elseif ($env:GITHUB_WORKSPACE) { "$env:GITHUB_WORKSPACE\raw_shared\dist" } else { "$PWD\raw_shared\dist" }
+$staticDist = if ($StaticDistDir) { 
+    $StaticDistDir 
+} elseif ($dist -match 'raw_shared') {
+    $dist.Replace('raw_shared', 'raw_static')
+} elseif ($env:GITHUB_WORKSPACE) { 
+    "$env:GITHUB_WORKSPACE\raw_static\dist" 
+} else { 
+    "$PWD\raw_static\dist" 
+}
 
 # Locate dumpbin.exe
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -84,3 +94,34 @@ if ($failed) {
 }
 
 Write-Host "`n🎉 ALL $($allDlls.Count) DLLs (Core, Providers, Engines) are verified TRUE ARM64X binaries!"
+
+# 3. Verify static ARM64X liblegacy.lib
+Write-Host "`n=== 3. Verifying Static ARM64X liblegacy.lib ==="
+$legacyLibPath = Join-Path $staticDist "lib\static\liblegacy.lib"
+Write-Host "[+] Inspecting: $legacyLibPath"
+if (-not (Test-Path $legacyLibPath)) {
+    throw "FATAL: Static liblegacy.lib not found at: '$legacyLibPath'!"
+}
+
+$legacyHeaders = & $dumpbin /headers $legacyLibPath | Out-String
+$hasArm64   = $legacyHeaders -match "(?i)AA64\s+machine\s+\(ARM64\)" -or $legacyHeaders -match "(?i)machine\s+\(.*ARM64\)"
+$hasArm64EC = $legacyHeaders -match "(?i)A64E\s+machine\s+\(ARM64EC\)" -or $legacyHeaders -match "(?i)machine\s+\(.*ARM64EC\)"
+
+Write-Host "  -> Static liblegacy.lib: ARM64=$hasArm64 | ARM64EC=$hasArm64EC"
+if (-not $hasArm64 -or -not $hasArm64EC) {
+    throw "FATAL: liblegacy.lib failed ARM64X verification: Must contain both ARM64 and ARM64EC object members!"
+}
+Write-Host "✅ liblegacy.lib is confirmed a valid ARM64X static archive"
+
+# Verify pure slice archives exist
+$arm64Slice   = Join-Path $staticDist "lib\static\arm64\liblegacy.lib"
+$arm64ecSlice = Join-Path $staticDist "lib\static\arm64ec\liblegacy.lib"
+if (-not (Test-Path $arm64Slice))   { throw "FATAL: Pure slice archive not found: $arm64Slice" }
+if (-not (Test-Path $arm64ecSlice)) { throw "FATAL: Pure slice archive not found: $arm64ecSlice" }
+Write-Host "✅ Verified pure slice archives exist in arm64/ and arm64ec/"
+
+# Check import library in shared dist if present
+$legacyImportPath = Join-Path $dist "lib\import\legacy.lib"
+if (Test-Path $legacyImportPath) {
+    Write-Host "✅ legacy.lib import library verified at: $legacyImportPath"
+}

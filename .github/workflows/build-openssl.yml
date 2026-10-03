@@ -312,7 +312,7 @@ jobs:
       - name: Organize Unix Binaries
         if: matrix.platform.label != 'Windows'
         shell: bash
-        run: bash ./scripts/02_compile_binaries/08_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist"
+        run: bash ./scripts/02_compile_binaries/08_organize_posix.sh "${{ matrix.platform.label }}" "${{ matrix.linkage }}" "${{ github.workspace }}/raw_artifact/usr/local" "${{ github.workspace }}/raw_artifact/dist" "${{ github.workspace }}/openssl-src"
 
       # Step 14: Upload Raw Artifact
       - name: Upload Raw Artifact

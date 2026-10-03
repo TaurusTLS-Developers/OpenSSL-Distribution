@@ -132,6 +132,9 @@ if [ -d "$STATIC_X64/lib/static" ]; then
     done
 fi
 
+# Ensure static liblegacy.a is fused with lipo
+lipo_combine "lib/static/liblegacy.a" "$DIST_DIR/lib/static/liblegacy.a"
+
 # Copy symlink script if present
 if [ -f "$SHARED_X64/install_symlinks.sh" ]; then
     cp -f "$SHARED_X64/install_symlinks.sh" "$DIST_DIR/"
@@ -144,6 +147,16 @@ echo "  $ARCH_INFO"
 if [[ "$ARCH_INFO" != *"x86_64"* ]] || [[ "$ARCH_INFO" != *"arm64"* ]]; then
     echo "FATAL: '$DIST_DIR/openssl' is not a valid Universal binary containing both x86_64 and arm64!"
     exit 1
+fi
+
+if [ -f "$DIST_DIR/lib/static/liblegacy.a" ]; then
+    echo "🔍 Verifying Universal Mach-O architectures on '$DIST_DIR/lib/static/liblegacy.a'..."
+    ARCH_INFO_LEGACY=$(lipo -info "$DIST_DIR/lib/static/liblegacy.a" 2>&1)
+    echo "  $ARCH_INFO_LEGACY"
+    if [[ "$ARCH_INFO_LEGACY" != *"x86_64"* ]] || [[ "$ARCH_INFO_LEGACY" != *"arm64"* ]]; then
+        echo "FATAL: '$DIST_DIR/lib/static/liblegacy.a' is not a valid Universal binary containing both x86_64 and arm64!"
+        exit 1
+    fi
 fi
 
 echo "✅ macOS Universal binaries successfully compiled and verified."
