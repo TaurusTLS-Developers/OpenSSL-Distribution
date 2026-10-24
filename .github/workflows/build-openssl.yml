@@ -17,21 +17,6 @@ on:
           - release
           - branch
         default: release
-      sign_binaries:
-        description: 'Sign Windows binaries & installers (Azure Trusted Signing)'
-        required: false
-        type: boolean
-        default: false
-      build_installers:
-        description: 'Build Windows Installers (InnoSetup EXE, MSIX, WiX MSI)'
-        required: false
-        type: boolean
-        default: false
-      build_windows:
-        description: 'Target: Windows (x64, x86, ARM64/ARM64X)'
-        required: false
-        type: boolean
-        default: true
       build_linux:
         description: 'Target: Linux (x64, arm64)'
         required: false
@@ -52,6 +37,21 @@ on:
         required: false
         type: boolean
         default: true
+      build_windows:
+        description: 'Target: Windows (x64, x86, ARM64/ARM64X)'
+        required: false
+        type: boolean
+        default: true
+      build_installers:
+        description: '  └─ [Windows] Build Installers (InnoSetup EXE, MSIX, WiX MSI)'
+        required: false
+        type: boolean
+        default: false
+      sign_binaries:
+        description: '  └─ [Windows] Sign Binaries & Installers (Azure Trusted Signing)'
+        required: false
+        type: boolean
+        default: false
       ignore_eol:
         description: 'Ignore EOL Check'
         required: false

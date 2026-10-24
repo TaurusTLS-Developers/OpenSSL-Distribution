@@ -116,12 +116,36 @@ $sslDef    = Get-ChildItem "$arm64ecShared\def" -Filter "*ssl*.def"    | Select-
 if (-not $cryptoDef) { throw "FATAL: libcrypto .def file not found in $arm64ecShared\def!" }
 if (-not $sslDef)    { throw "FATAL: libssl .def file not found in $arm64ecShared\def!" }
 
-# Link libcrypto-3-arm64.dll (ARM64X)
-cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$DistSharedDir\libcrypto-3-arm64.dll`" /IMPLIB:`"$DistSharedDir\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+# Resolve dynamic library names from slice to preserve original version suffix
+$cryptoDll = Get-ChildItem $arm64Shared -File -Filter "libcrypto*.dll" | Select-Object -First 1
+if (-not $cryptoDll) {
+    $cryptoDll = Get-ChildItem $arm64ecShared -File -Filter "libcrypto*.dll" | Select-Object -First 1
+}
+if (-not $cryptoDll) {
+    throw "FATAL: libcrypto DLL not found in $arm64Shared or $arm64ecShared to determine versioned filename!"
+}
+$cryptoDllName = $cryptoDll.Name
+
+$sslDll = Get-ChildItem $arm64Shared -File -Filter "libssl*.dll" | Select-Object -First 1
+if (-not $sslDll) {
+    $sslDll = Get-ChildItem $arm64ecShared -File -Filter "libssl*.dll" | Select-Object -First 1
+}
+if (-not $sslDll) {
+    throw "FATAL: libssl DLL not found in $arm64Shared or $arm64ecShared to determine versioned filename!"
+}
+$sslDllName = $sslDll.Name
+
+Write-Host "  -> Resolved libcrypto DLL: $cryptoDllName"
+Write-Host "  -> Resolved libssl DLL:    $sslDllName"
+
+# Link libcrypto (ARM64X)
+Write-Host "  -> Linking $cryptoDllName (ARM64X)..."
+cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$DistSharedDir\$cryptoDllName`" /IMPLIB:`"$DistSharedDir\lib\import\libcrypto.lib`" /DEF:`"$cryptoDef`" /DEFARM64NATIVE:`"$cryptoDef`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
 if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libcrypto DLL linking failed with exit code $LASTEXITCODE" }
 
-# Link libssl-3-arm64.dll (ARM64X)
-cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$DistSharedDir\libssl-3-arm64.dll`" /IMPLIB:`"$DistSharedDir\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$DistSharedDir\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
+# Link libssl (ARM64X)
+Write-Host "  -> Linking $sslDllName (ARM64X)..."
+cmd.exe /c "call `"$vcVars`" amd64_arm64 && link.exe /NOLOGO /DLL /MACHINE:ARM64X /OUT:`"$DistSharedDir\$sslDllName`" /IMPLIB:`"$DistSharedDir\lib\import\libssl.lib`" /DEF:`"$sslDef`" /DEFARM64NATIVE:`"$sslDef`" `"$arm64Static\lib\static\libssl.lib`" `"$arm64ecStatic\lib\static\libssl.lib`" `"$arm64Static\lib\static\libcrypto.lib`" `"$arm64ecStatic\lib\static\libcrypto.lib`" `"$DistSharedDir\lib\import\libcrypto.lib`" ws2_32.lib gdi32.lib advapi32.lib crypt32.lib user32.lib /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib"
 if ($LASTEXITCODE -ne 0) { throw "FATAL: Core ARM64X libssl DLL linking failed with exit code $LASTEXITCODE" }
 
 # Handle legacy import library
